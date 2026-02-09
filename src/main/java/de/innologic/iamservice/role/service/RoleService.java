@@ -5,6 +5,7 @@ import de.innologic.iamservice.assignment.repo.IamAssignmentRepository;
 import de.innologic.iamservice.domain.SubjectType;
 import de.innologic.iamservice.permission.entity.IamPermissionEntity;
 import de.innologic.iamservice.permission.repo.IamPermissionRepository;
+import de.innologic.iamservice.persistence.softdelete.SoftDeleteService;
 import de.innologic.iamservice.role.entity.IamRoleEntity;
 import de.innologic.iamservice.role.entity.IamRolePermissionEntity;
 import de.innologic.iamservice.role.repo.IamRolePermissionRepository;
@@ -15,7 +16,8 @@ import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class RoleService {
@@ -23,17 +25,21 @@ public class RoleService {
     private final IamRoleRepository roleRepo;
     private final IamPermissionRepository permRepo;
     private final IamRolePermissionRepository rolePermRepo;
+    private final SoftDeleteService softDeleteService;
+
     private final SubjectService subjectService;
     private final IamAssignmentRepository assignmentRepo;
 
     public RoleService(IamRoleRepository roleRepo,
                        IamPermissionRepository permRepo,
                        IamRolePermissionRepository rolePermRepo,
+                       SoftDeleteService softDeleteService,
                        SubjectService subjectService,
                        IamAssignmentRepository assignmentRepo) {
         this.roleRepo = roleRepo;
         this.permRepo = permRepo;
         this.rolePermRepo = rolePermRepo;
+        this.softDeleteService = softDeleteService;
         this.subjectService = subjectService;
         this.assignmentRepo = assignmentRepo;
     }
@@ -57,15 +63,31 @@ public class RoleService {
         IamRoleEntity role = roleRepo.findByIdAndTenantId(roleId, tenantId)
                 .orElseThrow(() -> new EntityNotFoundException("role not found"));
 
-        rolePermRepo.deleteByRole_Id(role.getId());
+        // 1) existierende RolePermissions soft-deleten (kein Hard-Delete!)
+        List<IamRolePermissionEntity> existing = rolePermRepo.findByRole_Id(role.getId());
+        for (IamRolePermissionEntity rp : existing) {
+            softDeleteService.softDelete(rolePermRepo, rp);
+        }
 
-        // Permission Codes -> Entities
-        for (String code : permissionCodes) {
-            IamPermissionEntity p = permRepo.findAll().stream()
-                    .filter(x -> x.getCode().equals(code))
-                    .findFirst()
-                    .orElseThrow(() -> new EntityNotFoundException("permission not found: " + code));
+        // 2) neue Permissions sauber aus DB laden
+        Set<String> requested = permissionCodes == null ? Set.of()
+                : permissionCodes.stream().filter(Objects::nonNull).map(String::trim).filter(s -> !s.isBlank()).collect(Collectors.toSet());
 
+        if (requested.isEmpty()) {
+            return; // Rolle hat dann keine Permissions
+        }
+
+        List<IamPermissionEntity> perms = permRepo.findByCodeInAndActiveTrue(requested);
+
+        Set<String> found = perms.stream().map(IamPermissionEntity::getCode).collect(Collectors.toSet());
+        if (found.size() != requested.size()) {
+            Set<String> missing = new TreeSet<>(requested);
+            missing.removeAll(found);
+            throw new EntityNotFoundException("permission(s) not found or inactive: " + missing);
+        }
+
+        // 3) neue Mappings anlegen
+        for (IamPermissionEntity p : perms) {
             IamRolePermissionEntity rp = new IamRolePermissionEntity();
             rp.setRole(role);
             rp.setPermission(p);
