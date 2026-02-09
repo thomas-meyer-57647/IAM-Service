@@ -15,9 +15,10 @@ public class ModuleDtos {
 
     public record SetRolePermissionsRequest(java.util.List<String> permissionCodes) {}
 
-    public record AssignRoleRequest(String tenantId, String subjectId, String subjectType, Long roleId) {}
+    // TenantId kommt via Header X-Tenant-Id
+    public record AssignRoleRequest(String subjectId, String subjectType, Long roleId) {}
 
     public record AccessResponse(String tenantId, String subjectId, String moduleKey, java.util.List<String> permissions) {}
 
-    public record AdminRequest(String tenantId, String subjectId, String subjectType) {}
+    public record AdminRequest(String subjectId, String subjectType) {}
 }

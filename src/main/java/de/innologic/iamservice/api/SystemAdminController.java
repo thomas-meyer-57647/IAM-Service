@@ -21,14 +21,14 @@ public class SystemAdminController {
         this.adminService = adminService;
     }
 
-    @PreAuthorize("hasAuthority('ROLE_SYSTEM_ADMIN')")
+    @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
     @PostMapping("/modules")
     public ModuleDtos.ModuleResponse createModule(@RequestBody ModuleDtos.CreateModuleRequest req) {
         var m = catalogService.createModule(req.moduleKey(), req.name(), req.description());
         return new ModuleDtos.ModuleResponse(m.getId(), m.getModuleKey(), m.getName(), m.getDescription(), m.isActive());
     }
 
-    @PreAuthorize("hasAuthority('ROLE_SYSTEM_ADMIN')")
+    @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
     @GetMapping("/modules")
     public List<ModuleDtos.ModuleResponse> listModules() {
         return catalogService.listModules().stream()
@@ -36,7 +36,7 @@ public class SystemAdminController {
                 .toList();
     }
 
-    @PreAuthorize("hasAuthority('ROLE_SYSTEM_ADMIN')")
+    @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
     @PostMapping("/modules/{moduleKey}/permissions")
     public ModuleDtos.PermissionResponse createPermission(@PathVariable String moduleKey,
                                                           @RequestBody ModuleDtos.CreatePermissionRequest req) {
@@ -44,7 +44,7 @@ public class SystemAdminController {
         return new ModuleDtos.PermissionResponse(p.getId(), moduleKey, p.getCode(), p.getDescription(), p.isActive());
     }
 
-    @PreAuthorize("hasAuthority('ROLE_SYSTEM_ADMIN')")
+    @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
     @GetMapping("/modules/{moduleKey}/permissions")
     public List<ModuleDtos.PermissionResponse> listPermissions(@PathVariable String moduleKey) {
         return catalogService.listPermissions(moduleKey).stream()
@@ -52,7 +52,7 @@ public class SystemAdminController {
                 .toList();
     }
 
-    @PreAuthorize("hasAuthority('ROLE_SYSTEM_ADMIN')")
+    @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
     @PutMapping("/tenants/{tenantId}/modules/{moduleKey}")
     public void setTenantModuleEnabled(@PathVariable String tenantId,
                                        @PathVariable String moduleKey,
@@ -60,7 +60,7 @@ public class SystemAdminController {
         catalogService.setTenantModuleEnabled(tenantId, moduleKey, req.enabled());
     }
 
-    @PreAuthorize("hasAuthority('ROLE_SYSTEM_ADMIN')")
+    @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
     @PutMapping("/admins/system")
     public void addSystemAdmin(@RequestBody ModuleDtos.AdminRequest req) {
         adminService.addSystemAdmin(req.subjectId(), SubjectType.valueOf(req.subjectType()));
