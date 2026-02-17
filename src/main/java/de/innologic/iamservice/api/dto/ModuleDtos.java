@@ -18,7 +18,7 @@ public class ModuleDtos {
     // TenantId kommt via Header X-Tenant-Id
     public record AssignRoleRequest(String subjectId, String subjectType, Long roleId) {}
 
-    public record AccessResponse(String tenantId, String subjectId, String moduleKey, java.util.List<String> permissions) {}
+    public record AccessResponse(boolean enabled, java.util.List<String> permissions, long permVersion) {}
 
     public record AdminRequest(String subjectId, String subjectType) {}
 }

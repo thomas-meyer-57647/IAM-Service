@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 
-@Component("iamAuthorizationService")
+@Component("iamAuthz")
 public class IamAuthorizationService {
 
     private final IamSubjectRepository subjectRepo;
@@ -48,6 +48,16 @@ public class IamAuthorizationService {
         String tokenSubjectId = resolveSubjectId(auth).orElse(null);
         if (tokenSubjectId != null && tokenSubjectId.equals(subjectId)) return true;
 
+        return isTenantAdmin(auth, tenantId);
+    }
+
+    public boolean canQueryAccess(Authentication auth, String subjectId) {
+        if (isSystemAdmin(auth)) return true;
+        String tokenSubjectId = resolveSubjectId(auth).orElse(null);
+        if (tokenSubjectId != null && tokenSubjectId.equals(subjectId)) return true;
+
+        String tenantId = CurrentPrincipal.tenantId().orElse(null);
+        if (tenantId == null || tenantId.isBlank()) return false;
         return isTenantAdmin(auth, tenantId);
     }
 

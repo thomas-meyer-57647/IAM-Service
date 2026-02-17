@@ -23,9 +23,15 @@ public final class CurrentPrincipal {
         return jwt().map(Jwt::getSubject);
     }
 
-    /** optional: tenantId (z.B. Claim "tenantId") */
+    /** tenantId (V1.1 Contract: Claim "tenant_id", Legacy-Fallback "tenantId") */
     public static Optional<String> tenantId() {
-        return jwt().map(j -> j.getClaimAsString("tenantId"));
+        return jwt().map(j -> {
+            String tenant = j.getClaimAsString("tenant_id");
+            if (tenant == null || tenant.isBlank()) {
+                tenant = j.getClaimAsString("tenantId");
+            }
+            return tenant;
+        }).filter(t -> t != null && !t.isBlank());
     }
 
     /** optional: subjectType (USER|SERVICE) */
