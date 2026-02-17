@@ -1,0 +1,1027 @@
+diff --git a/src/main/java/de/innologic/iamservice/access/service/AccessQueryService.java b/src/main/java/de/innologic/iamservice/access/service/AccessQueryService.java
+index 39f6341..bbcfcbc 100644
+--- a/src/main/java/de/innologic/iamservice/access/service/AccessQueryService.java
++++ b/src/main/java/de/innologic/iamservice/access/service/AccessQueryService.java
+@@ -3,6 +3,7 @@ package de.innologic.iamservice.access.service;
+ import de.innologic.iamservice.admin.service.AdminService;
+ import de.innologic.iamservice.catalog.service.CatalogService;
+ import de.innologic.iamservice.domain.SubjectType;
++import de.innologic.iamservice.permversion.service.PermVersionService;
+ import de.innologic.iamservice.permission.repo.IamPermissionRepository;
+ import de.innologic.iamservice.subject.entity.IamSubjectEntity;
+ import de.innologic.iamservice.subject.repo.IamSubjectRepository;
+@@ -18,41 +19,49 @@ public class AccessQueryService {
+     private final IamSubjectRepository subjectRepo;
+     private final AdminService adminService;
+     private final IamPermissionRepository permRepo;
++    private final PermVersionService permVersionService;
+ 
+     public AccessQueryService(CatalogService catalogService,
+                               IamSubjectRepository subjectRepo,
+                               AdminService adminService,
+-                              IamPermissionRepository permRepo) {
++                              IamPermissionRepository permRepo,
++                              PermVersionService permVersionService) {
+         this.catalogService = catalogService;
+         this.subjectRepo = subjectRepo;
+         this.adminService = adminService;
+         this.permRepo = permRepo;
++        this.permVersionService = permVersionService;
+     }
+ 
+     @Transactional
+-    public List<String> getPermissions(String tenantId, String subjectId, SubjectType type, String moduleKey) {
++    public AccessQueryResult getAccess(String tenantId, String subjectId, SubjectType type, String moduleKey) {
+ 
+         // Modul muss für Tenant enabled sein
+         if (!catalogService.isTenantModuleEnabled(tenantId, moduleKey)) {
+-            return List.of();
++            return new AccessQueryResult(false, List.of(), 1L);
+         }
+ 
+         IamSubjectEntity subject = subjectRepo.findBySubjectIdAndSubjectType(subjectId, type).orElse(null);
+-        if (subject == null) return List.of();
++        if (subject == null) return new AccessQueryResult(true, List.of(), 1L);
+ 
+         Long subjectPk = subject.getId();
++        long permVersion = permVersionService.getCurrentVersion(tenantId, subjectPk);
+ 
+         // Tenant-Admin: alle Permissions im Modul
+         if (adminService.isTenantAdmin(tenantId, subjectPk)) {
+-            return permRepo.findByModule_ModuleKey(moduleKey).stream()
++            List<String> permissions = permRepo.findByModule_ModuleKey(moduleKey).stream()
+                     .filter(p -> p.isActive())
+                     .map(p -> p.getCode())
+                     .distinct()
+                     .sorted()
+                     .toList();
++            return new AccessQueryResult(true, permissions, permVersion);
+         }
+ 
+         // Normalfall: 1 DB Query für effektive Permission-Codes
+-        return permRepo.findEffectivePermissionCodes(tenantId, subjectPk, moduleKey);
++        return new AccessQueryResult(true, permRepo.findEffectivePermissionCodes(tenantId, subjectPk, moduleKey), permVersion);
++    }
++
++    public record AccessQueryResult(boolean enabled, List<String> permissions, long permVersion) {
+     }
+ }
+diff --git a/src/main/java/de/innologic/iamservice/admin/repo/IamSystemAdminRepository.java b/src/main/java/de/innologic/iamservice/admin/repo/IamSystemAdminRepository.java
+index 7e4b114..9ac3f43 100644
+--- a/src/main/java/de/innologic/iamservice/admin/repo/IamSystemAdminRepository.java
++++ b/src/main/java/de/innologic/iamservice/admin/repo/IamSystemAdminRepository.java
+@@ -1,10 +1,26 @@
+ package de.innologic.iamservice.admin.repo;
+ 
+ import de.innologic.iamservice.admin.entity.IamSystemAdminEntity;
++import org.springframework.data.jpa.repository.Modifying;
++import org.springframework.data.jpa.repository.Query;
+ import org.springframework.data.jpa.repository.JpaRepository;
++import org.springframework.data.repository.query.Param;
+ 
+ import java.util.Optional;
+ 
+ public interface IamSystemAdminRepository extends JpaRepository<IamSystemAdminEntity, Long> {
+     Optional<IamSystemAdminEntity> findBySubject_Id(Long subjectPk);
++
++    @Modifying
++    @Query(value = """
++            update iam_system_admin
++            set deleted_at = null,
++                deleted_by = null,
++                modified_at = current_timestamp(3),
++                modified_by = :actor
++            where subject_pk = :subjectPk
++              and deleted_at is not null
++            limit 1
++            """, nativeQuery = true)
++    int restoreDeleted(@Param("subjectPk") Long subjectPk, @Param("actor") String actor);
+ }
+diff --git a/src/main/java/de/innologic/iamservice/admin/repo/IamTenantAdminRepository.java b/src/main/java/de/innologic/iamservice/admin/repo/IamTenantAdminRepository.java
+index 1788788..6ff7ea8 100644
+--- a/src/main/java/de/innologic/iamservice/admin/repo/IamTenantAdminRepository.java
++++ b/src/main/java/de/innologic/iamservice/admin/repo/IamTenantAdminRepository.java
+@@ -1,11 +1,31 @@
+ package de.innologic.iamservice.admin.repo;
+ 
+ import de.innologic.iamservice.admin.entity.IamTenantAdminEntity;
++import org.springframework.data.jpa.repository.Modifying;
++import org.springframework.data.jpa.repository.Query;
+ import org.springframework.data.jpa.repository.JpaRepository;
++import org.springframework.data.repository.query.Param;
+ 
+ import java.util.Optional;
++import java.util.Set;
+ 
+ public interface IamTenantAdminRepository extends JpaRepository<IamTenantAdminEntity, Long> {
+     long countByTenantId(String tenantId);
+     Optional<IamTenantAdminEntity> findByTenantIdAndSubject_Id(String tenantId, Long subjectPk);
++    @Query("select distinct a.subject.id from IamTenantAdminEntity a where a.tenantId = :tenantId")
++    Set<Long> findDistinctSubjectIdsByTenantId(@Param("tenantId") String tenantId);
++
++    @Modifying
++    @Query(value = """
++            update iam_tenant_admin
++            set deleted_at = null,
++                deleted_by = null,
++                modified_at = current_timestamp(3),
++                modified_by = :actor
++            where tenant_id = :tenantId
++              and subject_pk = :subjectPk
++              and deleted_at is not null
++            limit 1
++            """, nativeQuery = true)
++    int restoreDeleted(@Param("tenantId") String tenantId, @Param("subjectPk") Long subjectPk, @Param("actor") String actor);
+ }
+diff --git a/src/main/java/de/innologic/iamservice/admin/service/AdminService.java b/src/main/java/de/innologic/iamservice/admin/service/AdminService.java
+index 99d2779..c053c68 100644
+--- a/src/main/java/de/innologic/iamservice/admin/service/AdminService.java
++++ b/src/main/java/de/innologic/iamservice/admin/service/AdminService.java
+@@ -4,7 +4,10 @@ import de.innologic.iamservice.admin.entity.IamSystemAdminEntity;
+ import de.innologic.iamservice.admin.entity.IamTenantAdminEntity;
+ import de.innologic.iamservice.admin.repo.IamSystemAdminRepository;
+ import de.innologic.iamservice.admin.repo.IamTenantAdminRepository;
++import de.innologic.iamservice.assignment.repo.IamAssignmentRepository;
+ import de.innologic.iamservice.domain.SubjectType;
++import de.innologic.iamservice.permversion.service.PermVersionService;
++import de.innologic.iamservice.security.CurrentPrincipal;
+ import de.innologic.iamservice.subject.entity.IamSubjectEntity;
+ import de.innologic.iamservice.subject.service.SubjectService;
+ import de.innologic.iamservice.persistence.softdelete.SoftDeleteService;
+@@ -19,38 +22,56 @@ public class AdminService {
+     private final IamSystemAdminRepository systemAdminRepo;
+     private final IamTenantAdminRepository tenantAdminRepo;
+     private final SoftDeleteService softDeleteService;
++    private final PermVersionService permVersionService;
++    private final IamAssignmentRepository assignmentRepo;
+ 
+     public AdminService(SubjectService subjectService,
+                         IamSystemAdminRepository systemAdminRepo,
+                         IamTenantAdminRepository tenantAdminRepo,
+-                        SoftDeleteService softDeleteService) {
++                        SoftDeleteService softDeleteService,
++                        PermVersionService permVersionService,
++                        IamAssignmentRepository assignmentRepo) {
+         this.subjectService = subjectService;
+         this.systemAdminRepo = systemAdminRepo;
+         this.tenantAdminRepo = tenantAdminRepo;
+         this.softDeleteService = softDeleteService;
++        this.permVersionService = permVersionService;
++        this.assignmentRepo = assignmentRepo;
+     }
+ 
+     @Transactional
+     public void addSystemAdmin(String subjectId, SubjectType type) {
+         IamSubjectEntity s = subjectService.getOrCreate(subjectId, type);
+-        systemAdminRepo.findBySubject_Id(s.getId()).ifPresent(a -> {
+-            throw new IllegalArgumentException("already system admin: " + subjectId);
+-        });
+-        IamSystemAdminEntity a = new IamSystemAdminEntity();
+-        a.setSubject(s);
+-        systemAdminRepo.save(a);
++        Long subjectPk = s.getId();
++        if (systemAdminRepo.findBySubject_Id(subjectPk).isPresent()) {
++            return;
++        }
++        String actor = CurrentPrincipal.subjectId().orElse("system");
++        if (systemAdminRepo.restoreDeleted(subjectPk, actor) == 0) {
++            IamSystemAdminEntity a = new IamSystemAdminEntity();
++            a.setSubject(s);
++            systemAdminRepo.save(a);
++        }
++
++        assignmentRepo.findDistinctTenantIdsBySubjectId(subjectPk)
++                .forEach(tenantId -> permVersionService.incrementForSubject(tenantId, subjectPk));
+     }
+ 
+     @Transactional
+     public void addTenantAdmin(String tenantId, String subjectId, SubjectType type) {
+         IamSubjectEntity s = subjectService.getOrCreate(subjectId, type);
+-        tenantAdminRepo.findByTenantIdAndSubject_Id(tenantId, s.getId()).ifPresent(a -> {
+-            throw new IllegalArgumentException("already tenant admin: " + subjectId);
+-        });
+-        IamTenantAdminEntity a = new IamTenantAdminEntity();
+-        a.setTenantId(tenantId);
+-        a.setSubject(s);
+-        tenantAdminRepo.save(a);
++        Long subjectPk = s.getId();
++        if (tenantAdminRepo.findByTenantIdAndSubject_Id(tenantId, subjectPk).isPresent()) {
++            return;
++        }
++        String actor = CurrentPrincipal.subjectId().orElse("system");
++        if (tenantAdminRepo.restoreDeleted(tenantId, subjectPk, actor) == 0) {
++            IamTenantAdminEntity a = new IamTenantAdminEntity();
++            a.setTenantId(tenantId);
++            a.setSubject(s);
++            tenantAdminRepo.save(a);
++        }
++        permVersionService.incrementForSubject(tenantId, subjectPk);
+     }
+ 
+     @Transactional
+@@ -67,6 +88,7 @@ public class AdminService {
+ 
+         // Soft delete statt Hard delete
+         softDeleteService.softDelete((JpaRepository<IamTenantAdminEntity, Long>) tenantAdminRepo, a);
++        permVersionService.incrementForSubject(tenantId, s.getId());
+     }
+ 
+     public boolean isSystemAdmin(Long subjectPk) {
+diff --git a/src/main/java/de/innologic/iamservice/api/AccessController.java b/src/main/java/de/innologic/iamservice/api/AccessController.java
+index 51c21a1..fbaa55c 100644
+--- a/src/main/java/de/innologic/iamservice/api/AccessController.java
++++ b/src/main/java/de/innologic/iamservice/api/AccessController.java
+@@ -3,6 +3,8 @@ package de.innologic.iamservice.api;
+ import de.innologic.iamservice.access.service.AccessQueryService;
+ import de.innologic.iamservice.api.dto.ModuleDtos;
+ import de.innologic.iamservice.domain.SubjectType;
++import de.innologic.iamservice.security.CurrentPrincipal;
++import io.swagger.v3.oas.annotations.Operation;
+ import org.springframework.security.access.prepost.PreAuthorize;
+ import org.springframework.web.bind.annotation.*;
+ 
+@@ -16,20 +18,28 @@ public class AccessController {
+         this.accessQueryService = accessQueryService;
+     }
+ 
++    @PreAuthorize("@iamAuthz.canQueryAccess(authentication, #subjectId)")
++    @GetMapping("/subjects/{subjectId}/modules/{moduleKey}")
++    public ModuleDtos.AccessResponse canonicalPermissions(@PathVariable String subjectId,
++                                                          @PathVariable String moduleKey,
++                                                          @RequestParam(defaultValue = "USER") String subjectType) {
++        String tenantId = CurrentPrincipal.tenantId()
++                .orElseThrow(() -> new IllegalArgumentException("missing claim: tenant_id"));
++        return resolvePermissions(tenantId, subjectId, moduleKey, subjectType);
++    }
++
++    @Operation(deprecated = true)
+     @PreAuthorize("@iamAuthz.canQueryAccess(authentication, #tenantId, #subjectId)")
+     @GetMapping("/tenants/{tenantId}/subjects/{subjectId}/modules/{moduleKey}")
+-    public ModuleDtos.AccessResponse permissions(@PathVariable String tenantId,
+-                                                 @PathVariable String subjectId,
+-                                                 @PathVariable String moduleKey,
+-                                                 @RequestParam(defaultValue = "USER") String subjectType) {
+-
+-        var perms = accessQueryService.getPermissions(
+-                tenantId,
+-                subjectId,
+-                SubjectType.valueOf(subjectType),
+-                moduleKey
+-        );
++    public ModuleDtos.AccessResponse legacyPermissions(@PathVariable String tenantId,
++                                                       @PathVariable String subjectId,
++                                                       @PathVariable String moduleKey,
++                                                       @RequestParam(defaultValue = "USER") String subjectType) {
++        return resolvePermissions(tenantId, subjectId, moduleKey, subjectType);
++    }
+ 
+-        return new ModuleDtos.AccessResponse(tenantId, subjectId, moduleKey, perms);
++    private ModuleDtos.AccessResponse resolvePermissions(String tenantId, String subjectId, String moduleKey, String subjectType) {
++        var access = accessQueryService.getAccess(tenantId, subjectId, SubjectType.valueOf(subjectType), moduleKey);
++        return new ModuleDtos.AccessResponse(access.enabled(), access.permissions(), access.permVersion());
+     }
+ }
+diff --git a/src/main/java/de/innologic/iamservice/api/SystemAdminController.java b/src/main/java/de/innologic/iamservice/api/SystemAdminController.java
+index 059925e..fdcffba 100644
+--- a/src/main/java/de/innologic/iamservice/api/SystemAdminController.java
++++ b/src/main/java/de/innologic/iamservice/api/SystemAdminController.java
+@@ -4,13 +4,16 @@ import de.innologic.iamservice.api.dto.ModuleDtos;
+ import de.innologic.iamservice.admin.service.AdminService;
+ import de.innologic.iamservice.catalog.service.CatalogService;
+ import de.innologic.iamservice.domain.SubjectType;
++import io.swagger.v3.oas.annotations.Operation;
+ import org.springframework.security.access.prepost.PreAuthorize;
+ import org.springframework.web.bind.annotation.*;
+ 
+ import java.util.List;
+ 
++import static de.innologic.iamservice.api.TenantHeaders.TENANT_ID;
++
+ @RestController
+-@RequestMapping("/v1/system")
++@RequestMapping("/v1")
+ public class SystemAdminController {
+ 
+     private final CatalogService catalogService;
+@@ -28,6 +31,13 @@ public class SystemAdminController {
+         return new ModuleDtos.ModuleResponse(m.getId(), m.getModuleKey(), m.getName(), m.getDescription(), m.isActive());
+     }
+ 
++    @Operation(deprecated = true)
++    @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
++    @PostMapping("/system/modules")
++    public ModuleDtos.ModuleResponse createModuleLegacy(@RequestBody ModuleDtos.CreateModuleRequest req) {
++        return createModule(req);
++    }
++
+     @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
+     @GetMapping("/modules")
+     public List<ModuleDtos.ModuleResponse> listModules() {
+@@ -36,6 +46,13 @@ public class SystemAdminController {
+                 .toList();
+     }
+ 
++    @Operation(deprecated = true)
++    @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
++    @GetMapping("/system/modules")
++    public List<ModuleDtos.ModuleResponse> listModulesLegacy() {
++        return listModules();
++    }
++
+     @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
+     @PostMapping("/modules/{moduleKey}/permissions")
+     public ModuleDtos.PermissionResponse createPermission(@PathVariable String moduleKey,
+@@ -44,6 +61,14 @@ public class SystemAdminController {
+         return new ModuleDtos.PermissionResponse(p.getId(), moduleKey, p.getCode(), p.getDescription(), p.isActive());
+     }
+ 
++    @Operation(deprecated = true)
++    @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
++    @PostMapping("/system/modules/{moduleKey}/permissions")
++    public ModuleDtos.PermissionResponse createPermissionLegacy(@PathVariable String moduleKey,
++                                                                @RequestBody ModuleDtos.CreatePermissionRequest req) {
++        return createPermission(moduleKey, req);
++    }
++
+     @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
+     @GetMapping("/modules/{moduleKey}/permissions")
+     public List<ModuleDtos.PermissionResponse> listPermissions(@PathVariable String moduleKey) {
+@@ -52,17 +77,40 @@ public class SystemAdminController {
+                 .toList();
+     }
+ 
++    @Operation(deprecated = true)
+     @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
+-    @PutMapping("/tenants/{tenantId}/modules/{moduleKey}")
+-    public void setTenantModuleEnabled(@PathVariable String tenantId,
++    @GetMapping("/system/modules/{moduleKey}/permissions")
++    public List<ModuleDtos.PermissionResponse> listPermissionsLegacy(@PathVariable String moduleKey) {
++        return listPermissions(moduleKey);
++    }
++
++    @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
++    @PutMapping("/tenant/modules/{moduleKey}")
++    public void setTenantModuleEnabled(@RequestHeader(TENANT_ID) String tenantId,
+                                        @PathVariable String moduleKey,
+                                        @RequestBody ModuleDtos.SetTenantModuleEnabledRequest req) {
+         catalogService.setTenantModuleEnabled(tenantId, moduleKey, req.enabled());
+     }
+ 
++    @Operation(deprecated = true)
++    @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
++    @PutMapping("/system/tenants/{tenantId}/modules/{moduleKey}")
++    public void setTenantModuleEnabledLegacy(@PathVariable String tenantId,
++                                             @PathVariable String moduleKey,
++                                             @RequestBody ModuleDtos.SetTenantModuleEnabledRequest req) {
++        catalogService.setTenantModuleEnabled(tenantId, moduleKey, req.enabled());
++    }
++
+     @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
+-    @PutMapping("/admins/system")
++    @PostMapping("/system/admins")
+     public void addSystemAdmin(@RequestBody ModuleDtos.AdminRequest req) {
+         adminService.addSystemAdmin(req.subjectId(), SubjectType.valueOf(req.subjectType()));
+     }
++
++    @Operation(deprecated = true)
++    @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
++    @PutMapping("/system/admins/system")
++    public void addSystemAdminLegacy(@RequestBody ModuleDtos.AdminRequest req) {
++        addSystemAdmin(req);
++    }
+ }
+diff --git a/src/main/java/de/innologic/iamservice/api/dto/ModuleDtos.java b/src/main/java/de/innologic/iamservice/api/dto/ModuleDtos.java
+index 809ecd6..830eeef 100644
+--- a/src/main/java/de/innologic/iamservice/api/dto/ModuleDtos.java
++++ b/src/main/java/de/innologic/iamservice/api/dto/ModuleDtos.java
+@@ -18,7 +18,7 @@ public class ModuleDtos {
+     // TenantId kommt via Header X-Tenant-Id
+     public record AssignRoleRequest(String subjectId, String subjectType, Long roleId) {}
+ 
+-    public record AccessResponse(String tenantId, String subjectId, String moduleKey, java.util.List<String> permissions) {}
++    public record AccessResponse(boolean enabled, java.util.List<String> permissions, long permVersion) {}
+ 
+     public record AdminRequest(String subjectId, String subjectType) {}
+ }
+diff --git a/src/main/java/de/innologic/iamservice/assignment/repo/IamAssignmentRepository.java b/src/main/java/de/innologic/iamservice/assignment/repo/IamAssignmentRepository.java
+index 3cfd3ca..f7e5e88 100644
+--- a/src/main/java/de/innologic/iamservice/assignment/repo/IamAssignmentRepository.java
++++ b/src/main/java/de/innologic/iamservice/assignment/repo/IamAssignmentRepository.java
+@@ -1,10 +1,45 @@
+ package de.innologic.iamservice.assignment.repo;
+ 
+ import de.innologic.iamservice.assignment.entity.IamAssignmentEntity;
++import org.springframework.data.jpa.repository.Modifying;
++import org.springframework.data.jpa.repository.Query;
+ import org.springframework.data.jpa.repository.JpaRepository;
++import org.springframework.data.repository.query.Param;
+ 
+ import java.util.List;
++import java.util.Set;
+ 
+ public interface IamAssignmentRepository extends JpaRepository<IamAssignmentEntity, Long> {
+     List<IamAssignmentEntity> findByTenantIdAndSubject_Id(String tenantId, Long subjectPk);
++
++    boolean existsByTenantIdAndSubject_IdAndRole_IdAndScopeTypeIsNullAndScopeIdIsNull(String tenantId, Long subjectPk, Long roleId);
++
++    @Query("select distinct a.subject.id from IamAssignmentEntity a where a.tenantId = :tenantId and a.role.id = :roleId")
++    Set<Long> findDistinctSubjectIdsByTenantIdAndRoleId(@Param("tenantId") String tenantId, @Param("roleId") Long roleId);
++
++    @Query("select distinct a.subject.id from IamAssignmentEntity a where a.tenantId = :tenantId")
++    Set<Long> findDistinctSubjectIdsByTenantId(@Param("tenantId") String tenantId);
++
++    @Query("select distinct a.tenantId from IamAssignmentEntity a where a.subject.id = :subjectPk")
++    Set<String> findDistinctTenantIdsBySubjectId(@Param("subjectPk") Long subjectPk);
++
++    @Modifying
++    @Query(value = """
++            update iam_assignment
++            set deleted_at = null,
++                deleted_by = null,
++                modified_at = current_timestamp(3),
++                modified_by = :actor
++            where tenant_id = :tenantId
++              and subject_pk = :subjectPk
++              and role_id = :roleId
++              and scope_type is null
++              and scope_id is null
++              and deleted_at is not null
++            limit 1
++            """, nativeQuery = true)
++    int restoreDeletedGlobalAssignment(@Param("tenantId") String tenantId,
++                                       @Param("subjectPk") Long subjectPk,
++                                       @Param("roleId") Long roleId,
++                                       @Param("actor") String actor);
+ }
+diff --git a/src/main/java/de/innologic/iamservice/catalog/service/CatalogService.java b/src/main/java/de/innologic/iamservice/catalog/service/CatalogService.java
+index c7d8c02..b985736 100644
+--- a/src/main/java/de/innologic/iamservice/catalog/service/CatalogService.java
++++ b/src/main/java/de/innologic/iamservice/catalog/service/CatalogService.java
+@@ -2,8 +2,12 @@ package de.innologic.iamservice.catalog.service;
+ 
+ import de.innologic.iamservice.module.entity.IamModuleEntity;
+ import de.innologic.iamservice.module.repo.IamModuleRepository;
++import de.innologic.iamservice.permversion.service.PermVersionService;
+ import de.innologic.iamservice.permission.entity.IamPermissionEntity;
+ import de.innologic.iamservice.permission.repo.IamPermissionRepository;
++import de.innologic.iamservice.security.CurrentPrincipal;
++import de.innologic.iamservice.assignment.repo.IamAssignmentRepository;
++import de.innologic.iamservice.admin.repo.IamTenantAdminRepository;
+ import de.innologic.iamservice.tenant.entity.IamTenantModuleEntity;
+ import de.innologic.iamservice.tenant.repo.IamTenantModuleRepository;
+ import jakarta.persistence.EntityNotFoundException;
+@@ -18,13 +22,22 @@ public class CatalogService {
+     private final IamModuleRepository moduleRepo;
+     private final IamPermissionRepository permRepo;
+     private final IamTenantModuleRepository tenantModuleRepo;
++    private final IamAssignmentRepository assignmentRepo;
++    private final IamTenantAdminRepository tenantAdminRepo;
++    private final PermVersionService permVersionService;
+ 
+     public CatalogService(IamModuleRepository moduleRepo,
+                           IamPermissionRepository permRepo,
+-                          IamTenantModuleRepository tenantModuleRepo) {
++                          IamTenantModuleRepository tenantModuleRepo,
++                          IamAssignmentRepository assignmentRepo,
++                          IamTenantAdminRepository tenantAdminRepo,
++                          PermVersionService permVersionService) {
+         this.moduleRepo = moduleRepo;
+         this.permRepo = permRepo;
+         this.tenantModuleRepo = tenantModuleRepo;
++        this.assignmentRepo = assignmentRepo;
++        this.tenantAdminRepo = tenantAdminRepo;
++        this.permVersionService = permVersionService;
+     }
+ 
+     @Transactional
+@@ -69,6 +82,11 @@ public class CatalogService {
+ 
+         IamTenantModuleEntity tm = tenantModuleRepo.findByTenantIdAndModule_ModuleKey(tenantId, moduleKey)
+                 .orElseGet(() -> {
++                    String actor = CurrentPrincipal.subjectId().orElse("system");
++                    if (tenantModuleRepo.restoreDeleted(tenantId, module.getId(), enabled, actor) > 0) {
++                        return tenantModuleRepo.findByTenantIdAndModule_ModuleKey(tenantId, moduleKey)
++                                .orElseThrow(() -> new IllegalStateException("tenant module restore failed"));
++                    }
+                     IamTenantModuleEntity x = new IamTenantModuleEntity();
+                     x.setTenantId(tenantId);
+                     x.setModule(module);
+@@ -76,7 +94,10 @@ public class CatalogService {
+                 });
+ 
+         tm.setEnabled(enabled);
+-        return tenantModuleRepo.save(tm);
++        IamTenantModuleEntity saved = tenantModuleRepo.save(tm);
++        assignmentRepo.findDistinctSubjectIdsByTenantId(tenantId).forEach(subjectPk -> permVersionService.incrementForSubject(tenantId, subjectPk));
++        tenantAdminRepo.findDistinctSubjectIdsByTenantId(tenantId).forEach(subjectPk -> permVersionService.incrementForSubject(tenantId, subjectPk));
++        return saved;
+     }
+ 
+     public boolean isTenantModuleEnabled(String tenantId, String moduleKey) {
+diff --git a/src/main/java/de/innologic/iamservice/config/SecurityConfig.java b/src/main/java/de/innologic/iamservice/config/SecurityConfig.java
+index a86968c..cd8df55 100644
+--- a/src/main/java/de/innologic/iamservice/config/SecurityConfig.java
++++ b/src/main/java/de/innologic/iamservice/config/SecurityConfig.java
+@@ -1,12 +1,14 @@
+ package de.innologic.iamservice.config;
+ 
+ import de.innologic.iamservice.security.JwtAuthoritiesConverter;
++import de.innologic.iamservice.security.JwtContractFilter;
+ import org.springframework.context.annotation.Bean;
+ import org.springframework.context.annotation.Configuration;
+ import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+ import org.springframework.security.config.http.SessionCreationPolicy;
+ import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
++import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
+ import org.springframework.security.web.SecurityFilterChain;
+ 
+ @Configuration
+@@ -14,10 +16,16 @@ import org.springframework.security.web.SecurityFilterChain;
+ public class SecurityConfig {
+ 
+     @Bean
+-    SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
++    SecurityFilterChain securityFilterChain(HttpSecurity http,
++                                            SecurityErrorHandlers securityErrorHandlers,
++                                            JwtContractFilter jwtContractFilter) throws Exception {
+         http
+                 .csrf(csrf -> csrf.disable())
+                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
++                .exceptionHandling(ex -> ex
++                        .authenticationEntryPoint(securityErrorHandlers)
++                        .accessDeniedHandler(securityErrorHandlers)
++                )
+                 .authorizeHttpRequests(auth -> auth
+                         .requestMatchers("/actuator/health").permitAll()
+                         .requestMatchers("/v3/api-docs/**", "/swagger-ui.html", "/swagger-ui/**").permitAll()
+@@ -25,7 +33,8 @@ public class SecurityConfig {
+                 )
+                 .oauth2ResourceServer(oauth2 -> oauth2
+                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
+-                );
++                )
++                .addFilterAfter(jwtContractFilter, BearerTokenAuthenticationFilter.class);
+ 
+         return http.build();
+     }
+diff --git a/src/main/java/de/innologic/iamservice/role/repo/IamRolePermissionRepository.java b/src/main/java/de/innologic/iamservice/role/repo/IamRolePermissionRepository.java
+index b44c214..f029d15 100644
+--- a/src/main/java/de/innologic/iamservice/role/repo/IamRolePermissionRepository.java
++++ b/src/main/java/de/innologic/iamservice/role/repo/IamRolePermissionRepository.java
+@@ -1,10 +1,30 @@
+ package de.innologic.iamservice.role.repo;
+ 
+ import de.innologic.iamservice.role.entity.IamRolePermissionEntity;
++import org.springframework.data.jpa.repository.Modifying;
++import org.springframework.data.jpa.repository.Query;
+ import org.springframework.data.jpa.repository.JpaRepository;
++import org.springframework.data.repository.query.Param;
+ 
+ import java.util.List;
++import java.util.Set;
+ 
+ public interface IamRolePermissionRepository extends JpaRepository<IamRolePermissionEntity, Long> {
+     List<IamRolePermissionEntity> findByRole_Id(Long roleId);
++    boolean existsByRole_IdAndPermission_Id(Long roleId, Long permissionId);
++    Set<IamRolePermissionEntity> findByRole_IdAndPermission_IdIn(Long roleId, Set<Long> permissionIds);
++
++    @Modifying
++    @Query(value = """
++            update iam_role_permission
++            set deleted_at = null,
++                deleted_by = null,
++                modified_at = current_timestamp(3),
++                modified_by = :actor
++            where role_id = :roleId
++              and permission_id = :permissionId
++              and deleted_at is not null
++            limit 1
++            """, nativeQuery = true)
++    int restoreDeleted(@Param("roleId") Long roleId, @Param("permissionId") Long permissionId, @Param("actor") String actor);
+ }
+diff --git a/src/main/java/de/innologic/iamservice/role/service/RoleService.java b/src/main/java/de/innologic/iamservice/role/service/RoleService.java
+index fed45e5..3d0037c 100644
+--- a/src/main/java/de/innologic/iamservice/role/service/RoleService.java
++++ b/src/main/java/de/innologic/iamservice/role/service/RoleService.java
+@@ -3,6 +3,7 @@ package de.innologic.iamservice.role.service;
+ import de.innologic.iamservice.assignment.entity.IamAssignmentEntity;
+ import de.innologic.iamservice.assignment.repo.IamAssignmentRepository;
+ import de.innologic.iamservice.domain.SubjectType;
++import de.innologic.iamservice.permversion.service.PermVersionService;
+ import de.innologic.iamservice.permission.entity.IamPermissionEntity;
+ import de.innologic.iamservice.permission.repo.IamPermissionRepository;
+ import de.innologic.iamservice.persistence.softdelete.SoftDeleteService;
+@@ -12,6 +13,7 @@ import de.innologic.iamservice.role.repo.IamRolePermissionRepository;
+ import de.innologic.iamservice.role.repo.IamRoleRepository;
+ import de.innologic.iamservice.subject.entity.IamSubjectEntity;
+ import de.innologic.iamservice.subject.service.SubjectService;
++import de.innologic.iamservice.security.CurrentPrincipal;
+ import jakarta.persistence.EntityNotFoundException;
+ import jakarta.transaction.Transactional;
+ import org.springframework.stereotype.Service;
+@@ -29,19 +31,22 @@ public class RoleService {
+ 
+     private final SubjectService subjectService;
+     private final IamAssignmentRepository assignmentRepo;
++    private final PermVersionService permVersionService;
+ 
+     public RoleService(IamRoleRepository roleRepo,
+                        IamPermissionRepository permRepo,
+                        IamRolePermissionRepository rolePermRepo,
+                        SoftDeleteService softDeleteService,
+                        SubjectService subjectService,
+-                       IamAssignmentRepository assignmentRepo) {
++                       IamAssignmentRepository assignmentRepo,
++                       PermVersionService permVersionService) {
+         this.roleRepo = roleRepo;
+         this.permRepo = permRepo;
+         this.rolePermRepo = rolePermRepo;
+         this.softDeleteService = softDeleteService;
+         this.subjectService = subjectService;
+         this.assignmentRepo = assignmentRepo;
++        this.permVersionService = permVersionService;
+     }
+ 
+     @Transactional
+@@ -63,20 +68,9 @@ public class RoleService {
+         IamRoleEntity role = roleRepo.findByIdAndTenantId(roleId, tenantId)
+                 .orElseThrow(() -> new EntityNotFoundException("role not found"));
+ 
+-        // 1) existierende RolePermissions soft-deleten (kein Hard-Delete!)
+-        List<IamRolePermissionEntity> existing = rolePermRepo.findByRole_Id(role.getId());
+-        for (IamRolePermissionEntity rp : existing) {
+-            softDeleteService.softDelete(rolePermRepo, rp);
+-        }
+-
+-        // 2) neue Permissions sauber aus DB laden
++        // 1) gewünschte Permissions laden
+         Set<String> requested = permissionCodes == null ? Set.of()
+                 : permissionCodes.stream().filter(Objects::nonNull).map(String::trim).filter(s -> !s.isBlank()).collect(Collectors.toSet());
+-
+-        if (requested.isEmpty()) {
+-            return; // Rolle hat dann keine Permissions
+-        }
+-
+         List<IamPermissionEntity> perms = permRepo.findByCodeInAndActiveTrue(requested);
+ 
+         Set<String> found = perms.stream().map(IamPermissionEntity::getCode).collect(Collectors.toSet());
+@@ -86,13 +80,32 @@ public class RoleService {
+             throw new EntityNotFoundException("permission(s) not found or inactive: " + missing);
+         }
+ 
+-        // 3) neue Mappings anlegen
++        // 2) existierende RolePermissions diffen und nur Delta ändern
++        Set<Long> requestedPermissionIds = perms.stream().map(IamPermissionEntity::getId).collect(Collectors.toSet());
++        List<IamRolePermissionEntity> existing = rolePermRepo.findByRole_Id(role.getId());
++        Set<Long> existingPermissionIds = existing.stream().map(rp -> rp.getPermission().getId()).collect(Collectors.toSet());
++
++        for (IamRolePermissionEntity rp : existing) {
++            if (!requestedPermissionIds.contains(rp.getPermission().getId())) {
++                softDeleteService.softDelete(rolePermRepo, rp);
++            }
++        }
++
++        String actor = CurrentPrincipal.subjectId().orElse("system");
+         for (IamPermissionEntity p : perms) {
++            if (existingPermissionIds.contains(p.getId())) {
++                continue;
++            }
++            if (rolePermRepo.restoreDeleted(role.getId(), p.getId(), actor) > 0) {
++                continue;
++            }
+             IamRolePermissionEntity rp = new IamRolePermissionEntity();
+             rp.setRole(role);
+             rp.setPermission(p);
+             rolePermRepo.save(rp);
+         }
++
++        permVersionService.incrementForSubjects(tenantId, assignmentRepo.findDistinctSubjectIdsByTenantIdAndRoleId(tenantId, roleId));
+     }
+ 
+     @Transactional
+@@ -101,11 +114,18 @@ public class RoleService {
+                 .orElseThrow(() -> new EntityNotFoundException("role not found"));
+ 
+         IamSubjectEntity subject = subjectService.getOrCreate(subjectId, subjectType);
+-
+-        IamAssignmentEntity a = new IamAssignmentEntity();
+-        a.setTenantId(tenantId);
+-        a.setSubject(subject);
+-        a.setRole(role);
+-        assignmentRepo.save(a);
++        Long subjectPk = subject.getId();
++
++        if (!assignmentRepo.existsByTenantIdAndSubject_IdAndRole_IdAndScopeTypeIsNullAndScopeIdIsNull(tenantId, subjectPk, roleId)) {
++            String actor = CurrentPrincipal.subjectId().orElse("system");
++            if (assignmentRepo.restoreDeletedGlobalAssignment(tenantId, subjectPk, roleId, actor) == 0) {
++                IamAssignmentEntity a = new IamAssignmentEntity();
++                a.setTenantId(tenantId);
++                a.setSubject(subject);
++                a.setRole(role);
++                assignmentRepo.save(a);
++            }
++        }
++        permVersionService.incrementForSubject(tenantId, subjectPk);
+     }
+ }
+diff --git a/src/main/java/de/innologic/iamservice/security/CurrentPrincipal.java b/src/main/java/de/innologic/iamservice/security/CurrentPrincipal.java
+index 5bb8e79..6dc4381 100644
+--- a/src/main/java/de/innologic/iamservice/security/CurrentPrincipal.java
++++ b/src/main/java/de/innologic/iamservice/security/CurrentPrincipal.java
+@@ -23,9 +23,15 @@ public final class CurrentPrincipal {
+         return jwt().map(Jwt::getSubject);
+     }
+ 
+-    /** optional: tenantId (z.B. Claim "tenantId") */
++    /** tenantId (V1.1 Contract: Claim "tenant_id", Legacy-Fallback "tenantId") */
+     public static Optional<String> tenantId() {
+-        return jwt().map(j -> j.getClaimAsString("tenantId"));
++        return jwt().map(j -> {
++            String tenant = j.getClaimAsString("tenant_id");
++            if (tenant == null || tenant.isBlank()) {
++                tenant = j.getClaimAsString("tenantId");
++            }
++            return tenant;
++        }).filter(t -> t != null && !t.isBlank());
+     }
+ 
+     /** optional: subjectType (USER|SERVICE) */
+diff --git a/src/main/java/de/innologic/iamservice/security/IamAuthorizationService.java b/src/main/java/de/innologic/iamservice/security/IamAuthorizationService.java
+index 28c9537..6d2e8d4 100644
+--- a/src/main/java/de/innologic/iamservice/security/IamAuthorizationService.java
++++ b/src/main/java/de/innologic/iamservice/security/IamAuthorizationService.java
+@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
+ 
+ import java.util.Optional;
+ 
+-@Component("iamAuthorizationService")
++@Component("iamAuthz")
+ public class IamAuthorizationService {
+ 
+     private final IamSubjectRepository subjectRepo;
+@@ -51,6 +51,16 @@ public class IamAuthorizationService {
+         return isTenantAdmin(auth, tenantId);
+     }
+ 
++    public boolean canQueryAccess(Authentication auth, String subjectId) {
++        if (isSystemAdmin(auth)) return true;
++        String tokenSubjectId = resolveSubjectId(auth).orElse(null);
++        if (tokenSubjectId != null && tokenSubjectId.equals(subjectId)) return true;
++
++        String tenantId = CurrentPrincipal.tenantId().orElse(null);
++        if (tenantId == null || tenantId.isBlank()) return false;
++        return isTenantAdmin(auth, tenantId);
++    }
++
+     private Optional<Long> resolveSubject(Authentication auth) {
+         String subjectId = resolveSubjectId(auth).orElse(null);
+         if (subjectId == null || subjectId.isBlank()) return Optional.empty();
+diff --git a/src/main/java/de/innologic/iamservice/tenant/repo/IamTenantModuleRepository.java b/src/main/java/de/innologic/iamservice/tenant/repo/IamTenantModuleRepository.java
+index 102eecd..1ce48ef 100644
+--- a/src/main/java/de/innologic/iamservice/tenant/repo/IamTenantModuleRepository.java
++++ b/src/main/java/de/innologic/iamservice/tenant/repo/IamTenantModuleRepository.java
+@@ -1,10 +1,28 @@
+ package de.innologic.iamservice.tenant.repo;
+ 
+ import de.innologic.iamservice.tenant.entity.IamTenantModuleEntity;
++import org.springframework.data.jpa.repository.Modifying;
++import org.springframework.data.jpa.repository.Query;
+ import org.springframework.data.jpa.repository.JpaRepository;
++import org.springframework.data.repository.query.Param;
+ 
+ import java.util.Optional;
+ 
+ public interface IamTenantModuleRepository extends JpaRepository<IamTenantModuleEntity, Long> {
+     Optional<IamTenantModuleEntity> findByTenantIdAndModule_ModuleKey(String tenantId, String moduleKey);
++
++    @Modifying
++    @Query(value = """
++            update iam_tenant_module
++            set deleted_at = null,
++                deleted_by = null,
++                enabled = :enabled,
++                modified_at = current_timestamp(3),
++                modified_by = :actor
++            where tenant_id = :tenantId
++              and module_id = :moduleId
++              and deleted_at is not null
++            limit 1
++            """, nativeQuery = true)
++    int restoreDeleted(@Param("tenantId") String tenantId, @Param("moduleId") Long moduleId, @Param("enabled") boolean enabled, @Param("actor") String actor);
+ }
+diff --git a/src/main/resources/keys/private.pem b/src/main/resources/keys/private.pem
+deleted file mode 100644
+index febced8..0000000
+--- a/src/main/resources/keys/private.pem
++++ /dev/null
+@@ -1,25 +0,0 @@
+------BEGIN PRIVATE KEY-----
+-MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQC4fxiSqn7ou3xYsEk6yX4SeJvb
+-8TPGtjL9l4qHcZcZlenqvjnTOGVFqSvoG1cSl5yZJjNMiMKZyN48JzUfF8eaRk/OYs1FFiv5irNv
+-u8o6zHe4eJkbdZIoERvwh+IBuutjCqSLoPLzPhHxsQIP6KuvnrE5ecfXKEYPVBal4K+x1mg0pRAq
+-Wts7uotpXHmlVaoHYPgIWYZ6uFFf6kmrsAs/GdhoMKTnXyCL/oWRitpWH1z+gxiwDh8wpte+g8xa
+-lmoFrTZhpa8WTelYGx7GwDjywzD5BgQ1h6I6pLpIDZXaLcWiHMCZq3beA34SMWcAeuCkMTO5pzx1
+-fH5a6ElPWGshAgMBAAECggEBALd67l0t4fhiPE+XQbyNFiwYdihNwEgmep9oTgRVGwf+5xrlA2zj
+-8RNOIrQ6PGXpEXvdWbcLazy1Xw5Dj7jUVVVAB64g5DOI0ULihYDhKUVAgu+aP+nnCut92GNlP4ao
+-9d8RfoK+Fd+CIyZR+tMHeXa2Q1n9mpiHHOWxorRkt1YLTGKCQCBgMeVhfx1/SJqG3JSz56YNBJGq
+-ldg8Pfl60ryYQIrsjb4BOYyz/fq93dhYgrbxu02fsj8gGfKKdNL5NYyojGTmVoqL62cW7yXrxsJ2
+-5u5BwVTbIztcVXeSyhHhQ0+l/hDjDFP4vRtVeI6P2tSfrJ+t9k6HZ1Unnxe6TmECgYEA2XfrmUzb
+-Lpx1pSHFOyXvDYhFqupKtza4ckZ0FJb1sGXmT2wLtuqEOIoiYG8IlzrAr8qt1pYqYj86jMkxkkfO
+-nqrYfeShp+xvFB318MeEymvZbuMeEShtD2JHdIifIZKesPxKwSOACY3+J9nS4JBx4JgZstjsEEOa
+-JiyUZfuSvScCgYEA2S+cY1dqzP84cEKh31fHbYmBcGW26QmOiDRyEQxVwSmpsgKo/wpG0DJy7n7w
+-ZWVgZI436pd5V3PhZpGBdSBk58Trz+iAcrAxQzHHE20C4lOD0VYxqyFalMSR3uLgCl3zPEyrU11H
+-T07OkB22djUt0m94wGKvVY+QXwtr2MWUUncCgYEAzAlAyo+aogv4MVwTAiDgPpEZ1HeIbIfx3H4P
+-0XWlxMCGqwPTpeY48hdgk5v5snJUcVs3aTtxPsbWN1tZoEaxLJtdDhliNvyVZ4mIxEVeaNFxqyF6
+-h1ynnqR2KHc63rQDIklEFhwpuE06JcewnDPKNJBgpDX0nnne+mwfO+Qi1EcCgYEAtnjv9e7+Rlmv
+-+3GgOtuvLHK5E8wBj21+GSWnKHeqnO36KxtdDVp/AHFCauqv4yD3icSLakf1pOoxWFGr6NJctPWY
+-AkgfkzxBR2lNDx8pqynruDeo51TQm+lDfXY0McGZmPH5h8L5JMLbfe3Y3Rv08bbCRzEiisphy9j2
+-tVvbMCUCgYB06+frOy2QfRh6rncK7tNoUh1DgIne2mtKd7rgjeV1ERR4/+7DH/HLwUhVBYH4ox5i
+-wH1PzUYK3fzVbE2NAzzqjO29mtA4A0AGNIk/XmqZLTHKuckUjtmwIdW7A9Oh02piqWt7VyFDlMi0
+-atmpNQweA94BFddR4hessFLfXnPxuQ==
+------END PRIVATE KEY-----
+-
+diff --git a/src/test/java/de/innologic/iamservice/IamServiceApplicationTests.java b/src/test/java/de/innologic/iamservice/IamServiceApplicationTests.java
+index a563ee1..a46da2a 100644
+--- a/src/test/java/de/innologic/iamservice/IamServiceApplicationTests.java
++++ b/src/test/java/de/innologic/iamservice/IamServiceApplicationTests.java
+@@ -9,7 +9,7 @@ import org.testcontainers.junit.jupiter.Container;
+ import org.testcontainers.junit.jupiter.Testcontainers;
+ 
+ @SpringBootTest
+-@Testcontainers
++@Testcontainers(disabledWithoutDocker = true)
+ class IamServiceApplicationTests {
+ 
+     @Container
+diff --git a/src/test/java/de/innologic/iamservice/access/AccessControllerWebMvcTest.java b/src/test/java/de/innologic/iamservice/access/AccessControllerWebMvcTest.java
+index 98dde0d..a03f563 100644
+--- a/src/test/java/de/innologic/iamservice/access/AccessControllerWebMvcTest.java
++++ b/src/test/java/de/innologic/iamservice/access/AccessControllerWebMvcTest.java
+@@ -2,10 +2,11 @@ package de.innologic.iamservice.access;
+ 
+ import de.innologic.iamservice.access.service.AccessQueryService;
+ import de.innologic.iamservice.api.AccessController;
++import de.innologic.iamservice.api.error.ApiErrorWriter;
+ import de.innologic.iamservice.config.SecurityConfig;
+-import de.innologic.iamservice.domain.SubjectType;
++import de.innologic.iamservice.config.SecurityErrorHandlers;
++import de.innologic.iamservice.security.JwtContractFilter;
+ import de.innologic.iamservice.security.IamAuthorizationService;
+-import de.innologic.iamservice.security.IamAuthz;
+ import de.innologic.iamservice.test.TestSecurityBeans;
+ import org.junit.jupiter.api.BeforeEach;
+ import org.junit.jupiter.api.Test;
+@@ -15,8 +16,6 @@ import org.springframework.boot.test.mock.mockito.MockBean;
+ import org.springframework.test.web.servlet.MockMvc;
+ import org.springframework.beans.factory.annotation.Autowired;
+ 
+-import java.util.List;
+-
+ import static org.mockito.ArgumentMatchers.*;
+ import static org.mockito.Mockito.when;
+ import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+@@ -24,7 +23,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
+ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+ 
+ @WebMvcTest(controllers = AccessController.class)
+-@Import({SecurityConfig.class, TestSecurityBeans.class})
++@Import({SecurityConfig.class, TestSecurityBeans.class, ApiErrorWriter.class, SecurityErrorHandlers.class, JwtContractFilter.class})
+ class AccessControllerWebMvcTest {
+ 
+     @Autowired
+@@ -33,33 +32,120 @@ class AccessControllerWebMvcTest {
+     @MockBean
+     AccessQueryService accessQueryService;
+ 
+-    @MockBean
+-    IamAuthorizationService iamAuthorizationService; // iamAuthz
+-
+     @MockBean(name = "iamAuthz")
+-    private IamAuthz iamAuthz;
++    IamAuthorizationService iamAuthorizationService; // iamAuthz
+ 
+     @BeforeEach
+     void stubAuthz() {
+-        when(iamAuthz.canQueryAccess(any(), anyString(), anyString())).thenReturn(true);
++        when(iamAuthorizationService.canQueryAccess(any(), anyString(), anyString())).thenReturn(true);
++        when(iamAuthorizationService.canQueryAccess(any(), anyString())).thenReturn(true);
+     }
+ 
+     @Test
+     void returnsPermissionsForModule() throws Exception {
+-        when(iamAuthorizationService.canQueryAccess(any(), eq("tenantA"), eq("user123"))).thenReturn(true);
+-
+-        when(accessQueryService.getPermissions("tenantA", "user123", SubjectType.USER, "timeentry"))
+-                .thenReturn(List.of("timeentry.read", "timeentry.write"));
++        when(accessQueryService.getAccess(eq("tenantA"), eq("user123"), any(), eq("timeentry")))
++                .thenReturn(new AccessQueryService.AccessQueryResult(
++                        true,
++                        java.util.List.of("timeentry.read", "timeentry.write"),
++                        42L
++                ));
+ 
+         mockMvc.perform(get("/v1/access/tenants/{tenantId}/subjects/{subjectId}/modules/{moduleKey}",
+                         "tenantA", "user123", "timeentry")
+                         .param("subjectType", "USER")
+-                        .with(jwt()))
++                        .with(jwt().jwt(jwt -> jwt
++                                .claim("iss", "https://auth.example.com")
++                                .claim("aud", java.util.List.of("iam-service"))
++                                .claim("jti", "jti-1")
++                                .claim("tenant_id", "tenantA")
++                                .issuedAt(java.time.Instant.now())
++                                .expiresAt(java.time.Instant.now().plusSeconds(3600))
++                        )))
+                 .andExpect(status().isOk())
+-                .andExpect(jsonPath("$.tenantId").value("tenantA"))
+-                .andExpect(jsonPath("$.subjectId").value("user123"))
+-                .andExpect(jsonPath("$.moduleKey").value("timeentry"))
++                .andExpect(jsonPath("$.enabled").value(true))
+                 .andExpect(jsonPath("$.permissions[0]").value("timeentry.read"))
+-                .andExpect(jsonPath("$.permissions[1]").value("timeentry.write"));
++                .andExpect(jsonPath("$.permissions[1]").value("timeentry.write"))
++                .andExpect(jsonPath("$.permVersion").value(42));
++    }
++
++    @Test
++    void missingMandatoryClaims_returns401() throws Exception {
++        mockMvc.perform(get("/v1/access/tenants/{tenantId}/subjects/{subjectId}/modules/{moduleKey}",
++                        "tenantA", "user123", "timeentry")
++                        .with(jwt().jwt(jwt -> jwt.claim("sub", "user123"))))
++                .andExpect(status().isUnauthorized())
++                .andExpect(jsonPath("$.status").value(401));
++    }
++
++    @Test
++    void missingTenantIdClaim_returns401() throws Exception {
++        mockMvc.perform(get("/v1/access/subjects/{subjectId}/modules/{moduleKey}", "user123", "timeentry")
++                        .with(jwt().jwt(jwt -> jwt
++                                .claim("iss", "https://auth.example.com")
++                                .claim("aud", java.util.List.of("iam-service"))
++                                .claim("jti", "jti-3")
++                                .issuedAt(java.time.Instant.now())
++                                .expiresAt(java.time.Instant.now().plusSeconds(3600))
++                        )))
++                .andExpect(status().isUnauthorized())
++                .andExpect(jsonPath("$.status").value(401));
++    }
++
++    @Test
++    void missingAudience_returns401() throws Exception {
++        mockMvc.perform(get("/v1/access/subjects/{subjectId}/modules/{moduleKey}", "user123", "timeentry")
++                        .with(jwt().jwt(jwt -> jwt
++                                .claim("iss", "https://auth.example.com")
++                                .claim("jti", "jti-4")
++                                .claim("tenant_id", "tenantA")
++                                .issuedAt(java.time.Instant.now())
++                                .expiresAt(java.time.Instant.now().plusSeconds(3600))
++                        )))
++                .andExpect(status().isUnauthorized())
++                .andExpect(jsonPath("$.status").value(401));
++    }
++
++    @Test
++    void missingJti_returns401() throws Exception {
++        mockMvc.perform(get("/v1/access/subjects/{subjectId}/modules/{moduleKey}", "user123", "timeentry")
++                        .with(jwt().jwt(jwt -> jwt
++                                .claim("iss", "https://auth.example.com")
++                                .claim("aud", java.util.List.of("iam-service"))
++                                .claim("tenant_id", "tenantA")
++                                .issuedAt(java.time.Instant.now())
++                                .expiresAt(java.time.Instant.now().plusSeconds(3600))
++                        )))
++                .andExpect(status().isUnauthorized())
++                .andExpect(jsonPath("$.status").value(401));
++    }
++
++    @Test
++    void missingIat_returns401() throws Exception {
++        mockMvc.perform(get("/v1/access/subjects/{subjectId}/modules/{moduleKey}", "user123", "timeentry")
++                        .with(jwt().jwt(jwt -> jwt
++                                .claim("iss", "https://auth.example.com")
++                                .claim("aud", java.util.List.of("iam-service"))
++                                .claim("jti", "jti-5")
++                                .claim("tenant_id", "tenantA")
++                                .expiresAt(java.time.Instant.now().plusSeconds(3600))
++                        )))
++                .andExpect(status().isUnauthorized())
++                .andExpect(jsonPath("$.status").value(401));
++    }
++
++    @Test
++    void tenantMismatch_returns403() throws Exception {
++        mockMvc.perform(get("/v1/access/tenants/{tenantId}/subjects/{subjectId}/modules/{moduleKey}",
++                        "tenantB", "user123", "timeentry")
++                        .with(jwt().jwt(jwt -> jwt
++                                .claim("iss", "https://auth.example.com")
++                                .claim("aud", java.util.List.of("iam-service"))
++                                .claim("jti", "jti-2")
++                                .claim("tenant_id", "tenantA")
++                                .issuedAt(java.time.Instant.now())
++                                .expiresAt(java.time.Instant.now().plusSeconds(3600))
++                        )))
++                .andExpect(status().isForbidden())
++                .andExpect(jsonPath("$.status").value(403));
+     }
+ }
