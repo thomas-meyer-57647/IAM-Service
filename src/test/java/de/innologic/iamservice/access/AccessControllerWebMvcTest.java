@@ -57,6 +57,7 @@ class AccessControllerWebMvcTest {
                                 .claim("iss", "https://auth.example.com")
                                 .claim("aud", java.util.List.of("iam-service"))
                                 .claim("jti", "jti-1")
+                                .claim("subject_type", "USER")
                                 .claim("tenant_id", "tenantA")
                                 .issuedAt(java.time.Instant.now())
                                 .expiresAt(java.time.Instant.now().plusSeconds(3600))
@@ -84,6 +85,7 @@ class AccessControllerWebMvcTest {
                                 .claim("iss", "https://auth.example.com")
                                 .claim("aud", java.util.List.of("iam-service"))
                                 .claim("jti", "jti-3")
+                                .claim("subject_type", "USER")
                                 .issuedAt(java.time.Instant.now())
                                 .expiresAt(java.time.Instant.now().plusSeconds(3600))
                         )))
@@ -98,6 +100,7 @@ class AccessControllerWebMvcTest {
                                 .claim("iss", "https://auth.example.com")
                                 .claim("jti", "jti-4")
                                 .claim("tenant_id", "tenantA")
+                                .claim("subject_type", "USER")
                                 .issuedAt(java.time.Instant.now())
                                 .expiresAt(java.time.Instant.now().plusSeconds(3600))
                         )))
@@ -112,6 +115,38 @@ class AccessControllerWebMvcTest {
                                 .claim("iss", "https://auth.example.com")
                                 .claim("aud", java.util.List.of("iam-service"))
                                 .claim("tenant_id", "tenantA")
+                                .claim("subject_type", "USER")
+                                .issuedAt(java.time.Instant.now())
+                                .expiresAt(java.time.Instant.now().plusSeconds(3600))
+                        )))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value(401));
+    }
+
+    @Test
+    void missingSubjectType_returns401() throws Exception {
+        mockMvc.perform(get("/v1/access/subjects/{subjectId}/modules/{moduleKey}", "user123", "timeentry")
+                        .with(jwt().jwt(jwt -> jwt
+                                .claim("iss", "https://auth.example.com")
+                                .claim("aud", java.util.List.of("iam-service"))
+                                .claim("jti", "jti-6")
+                                .claim("tenant_id", "tenantA")
+                                .issuedAt(java.time.Instant.now())
+                                .expiresAt(java.time.Instant.now().plusSeconds(3600))
+                        )))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value(401));
+    }
+
+    @Test
+    void invalidSubjectType_returns401() throws Exception {
+        mockMvc.perform(get("/v1/access/subjects/{subjectId}/modules/{moduleKey}", "user123", "timeentry")
+                        .with(jwt().jwt(jwt -> jwt
+                                .claim("iss", "https://auth.example.com")
+                                .claim("aud", java.util.List.of("iam-service"))
+                                .claim("jti", "jti-7")
+                                .claim("tenant_id", "tenantA")
+                                .claim("subject_type", "ADMIN")
                                 .issuedAt(java.time.Instant.now())
                                 .expiresAt(java.time.Instant.now().plusSeconds(3600))
                         )))
@@ -127,6 +162,7 @@ class AccessControllerWebMvcTest {
                                 .claim("aud", java.util.List.of("iam-service"))
                                 .claim("jti", "jti-5")
                                 .claim("tenant_id", "tenantA")
+                                .claim("subject_type", "USER")
                                 .expiresAt(java.time.Instant.now().plusSeconds(3600))
                         )))
                 .andExpect(status().isUnauthorized())
@@ -142,6 +178,7 @@ class AccessControllerWebMvcTest {
                                 .claim("aud", java.util.List.of("iam-service"))
                                 .claim("jti", "jti-2")
                                 .claim("tenant_id", "tenantA")
+                                .claim("subject_type", "USER")
                                 .issuedAt(java.time.Instant.now())
                                 .expiresAt(java.time.Instant.now().plusSeconds(3600))
                         )))

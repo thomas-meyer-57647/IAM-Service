@@ -18,6 +18,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -26,6 +27,8 @@ public class JwtContractFilter extends OncePerRequestFilter {
 
     private static final Pattern TENANT_PATH_PATTERN = Pattern.compile("/tenants/([^/]+)");
     private static final List<String> REQUIRED_STRING_CLAIMS = List.of("iss", "sub", "jti", "tenant_id");
+    private static final String SUBJECT_TYPE_CLAIM = "subject_type";
+    private static final Set<String> VALID_SUBJECT_TYPES = Set.of("USER", "SERVICE");
 
     private final ApiErrorWriter apiErrorWriter;
 
@@ -81,6 +84,14 @@ public class JwtContractFilter extends OncePerRequestFilter {
         List<String> aud = jwt.getAudience();
         if (aud == null || aud.stream().noneMatch("iam-service"::equals)) {
             return "wrong audience";
+        }
+
+        String subjectType = jwt.getClaimAsString(SUBJECT_TYPE_CLAIM);
+        if (subjectType == null || subjectType.isBlank()) {
+            return "missing claim: " + SUBJECT_TYPE_CLAIM;
+        }
+        if (!VALID_SUBJECT_TYPES.contains(subjectType)) {
+            return "invalid subject_type";
         }
 
         return null;
