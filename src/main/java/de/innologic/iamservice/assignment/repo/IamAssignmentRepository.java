@@ -25,19 +25,22 @@ public interface IamAssignmentRepository extends JpaRepository<IamAssignmentEnti
 
     @Modifying
     @Query(value = """
-            update iam_assignment
-            set deleted_at = null,
-                deleted_by = null,
-                modified_at = current_timestamp(3),
-                modified_by = :actor
-            where tenant_id = :tenantId
-              and subject_pk = :subjectPk
-              and role_id = :roleId
-              and scope_type is null
-              and scope_id is null
-              and deleted_at is not null
-            limit 1
-            """, nativeQuery = true)
+        update iam_assignment
+        set deleted_at = null,
+            deleted_by = null,
+            scope_type_norm = '__NULL__',
+            scope_id_norm = '__NULL__',
+            active_key = 1,
+            modified_at = current_timestamp(3),
+            modified_by = :actor
+        where tenant_id = :tenantId
+          and subject_pk = :subjectPk
+          and role_id = :roleId
+          and scope_type is null
+          and scope_id is null
+          and deleted_at is not null
+        limit 1
+        """, nativeQuery = true)
     int restoreDeletedGlobalAssignment(@Param("tenantId") String tenantId,
                                        @Param("subjectPk") Long subjectPk,
                                        @Param("roleId") Long roleId,

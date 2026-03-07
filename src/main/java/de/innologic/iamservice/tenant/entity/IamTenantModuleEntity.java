@@ -20,6 +20,15 @@ public class IamTenantModuleEntity extends BaseAuditableEntity {
     @Column(name = "enabled", nullable = false)
     private boolean enabled = true;
 
+    @Column(name = "active_key")
+    private Integer activeKey;
+
+    @PrePersist
+    @PreUpdate
+    void syncDerivedColumns() {
+        this.activeKey = getDeletedAt() == null ? 1 : null;
+    }
+
     public String getTenantId() { return tenantId; }
     public void setTenantId(String tenantId) { this.tenantId = tenantId; }
 
@@ -28,4 +37,7 @@ public class IamTenantModuleEntity extends BaseAuditableEntity {
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
+
+    public Integer getActiveKey() { return activeKey; }
+    public void setActiveKey(Integer activeKey) { this.activeKey = activeKey; }
 }

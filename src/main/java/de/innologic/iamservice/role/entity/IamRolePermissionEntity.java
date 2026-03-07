@@ -18,9 +18,21 @@ public class IamRolePermissionEntity extends BaseAuditableEntity {
     @JoinColumn(name = "permission_id", nullable = false)
     private IamPermissionEntity permission;
 
+    @Column(name = "active_key")
+    private Integer activeKey;
+
+    @PrePersist
+    @PreUpdate
+    void syncDerivedColumns() {
+        this.activeKey = getDeletedAt() == null ? 1 : null;
+    }
+
     public IamRoleEntity getRole() { return role; }
     public void setRole(IamRoleEntity role) { this.role = role; }
 
     public IamPermissionEntity getPermission() { return permission; }
     public void setPermission(IamPermissionEntity permission) { this.permission = permission; }
+
+    public Integer getActiveKey() { return activeKey; }
+    public void setActiveKey(Integer activeKey) { this.activeKey = activeKey; }
 }

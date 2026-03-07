@@ -13,16 +13,17 @@ public interface IamTenantModuleRepository extends JpaRepository<IamTenantModule
 
     @Modifying
     @Query(value = """
-            update iam_tenant_module
-            set deleted_at = null,
-                deleted_by = null,
-                enabled = :enabled,
-                modified_at = current_timestamp(3),
-                modified_by = :actor
-            where tenant_id = :tenantId
-              and module_id = :moduleId
-              and deleted_at is not null
-            limit 1
-            """, nativeQuery = true)
+        update iam_tenant_module
+        set deleted_at = null,
+            deleted_by = null,
+            enabled = :enabled,
+            active_key = 1,
+            modified_at = current_timestamp(3),
+            modified_by = :actor
+        where tenant_id = :tenantId
+          and module_id = :moduleId
+          and deleted_at is not null
+        limit 1
+        """, nativeQuery = true)
     int restoreDeleted(@Param("tenantId") String tenantId, @Param("moduleId") Long moduleId, @Param("enabled") boolean enabled, @Param("actor") String actor);
 }

@@ -2,6 +2,8 @@ package de.innologic.iamservice.config;
 
 import de.innologic.iamservice.security.JwtAuthoritiesConverter;
 import de.innologic.iamservice.security.JwtContractFilter;
+import org.springframework.boot.actuate.autoconfigure.security.servlet.EndpointRequest;
+import org.springframework.boot.actuate.health.HealthEndpoint;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -27,7 +29,7 @@ public class SecurityConfig {
                         .accessDeniedHandler(securityErrorHandlers)
                 )
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/actuator/health").permitAll()
+                        .requestMatchers(EndpointRequest.to(HealthEndpoint.class)).permitAll()
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui.html", "/swagger-ui/**").permitAll()
                         .anyRequest().authenticated()
                 )
