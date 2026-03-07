@@ -5,9 +5,11 @@ import de.innologic.iamservice.api.AccessController;
 import de.innologic.iamservice.api.error.ApiErrorWriter;
 import de.innologic.iamservice.config.SecurityConfig;
 import de.innologic.iamservice.config.SecurityErrorHandlers;
+import de.innologic.iamservice.domain.SubjectType;
 import de.innologic.iamservice.security.JwtContractFilter;
 import de.innologic.iamservice.security.IamAuthorizationService;
 import de.innologic.iamservice.test.TestSecurityBeans;
+import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -67,6 +69,69 @@ class AccessControllerWebMvcTest {
                 .andExpect(jsonPath("$.permissions[0]").value("timeentry.read"))
                 .andExpect(jsonPath("$.permissions[1]").value("timeentry.write"))
                 .andExpect(jsonPath("$.permVersion").value(42));
+    }
+
+    @Test
+    void canonicalEndpointUsesDefaultSubjectType() throws Exception {
+        when(accessQueryService.getAccess(eq("tenantA"), eq("user123"), eq(SubjectType.USER), eq("timeentry")))
+                .thenReturn(new AccessQueryService.AccessQueryResult(true, java.util.List.of("timeentry.read"), 7L));
+
+        mockMvc.perform(get("/v1/access/subjects/{subjectId}/modules/{moduleKey}", "user123", "timeentry")
+                        .with(jwt().jwt(jwt -> jwt
+                                .claim("iss", "https://auth.example.com")
+                                .claim("aud", java.util.List.of("iam-service"))
+                                .claim("jti", "jti-default")
+                                .claim("tenant_id", "tenantA")
+                                .claim("subject_type", "USER")
+                                .issuedAt(java.time.Instant.now())
+                                .expiresAt(java.time.Instant.now().plusSeconds(3600))
+                        )))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(true))
+                .andExpect(jsonPath("$.permissions[0]").value("timeentry.read"))
+                .andExpect(jsonPath("$.permVersion").value(7));
+    }
+
+    @Test
+    void canonicalModuleDisabled_returnsFalse() throws Exception {
+        when(accessQueryService.getAccess(eq("tenantA"), eq("user123"), any(), eq("timeentry")))
+                .thenReturn(new AccessQueryService.AccessQueryResult(false, java.util.List.of(), 5L));
+
+        mockMvc.perform(get("/v1/access/subjects/{subjectId}/modules/{moduleKey}", "user123", "timeentry")
+                        .param("subjectType", "USER")
+                        .with(jwt().jwt(jwt -> jwt
+                                .claim("iss", "https://auth.example.com")
+                                .claim("aud", java.util.List.of("iam-service"))
+                                .claim("jti", "jti-module")
+                                .claim("tenant_id", "tenantA")
+                                .claim("subject_type", "USER")
+                                .issuedAt(java.time.Instant.now())
+                                .expiresAt(java.time.Instant.now().plusSeconds(3600))
+                        )))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(false))
+                .andExpect(jsonPath("$.permissions").isEmpty())
+                .andExpect(jsonPath("$.permVersion").value(5));
+    }
+
+    @Test
+    void canonicalSubjectUnknown_returns404() throws Exception {
+        when(accessQueryService.getAccess(eq("tenantA"), eq("missing"), any(), eq("timeentry")))
+                .thenThrow(new EntityNotFoundException("Subject missing"));
+
+        mockMvc.perform(get("/v1/access/subjects/{subjectId}/modules/{moduleKey}", "missing", "timeentry")
+                        .param("subjectType", "USER")
+                        .with(jwt().jwt(jwt -> jwt
+                                .claim("iss", "https://auth.example.com")
+                                .claim("aud", java.util.List.of("iam-service"))
+                                .claim("jti", "jti-404")
+                                .claim("tenant_id", "tenantA")
+                                .claim("subject_type", "USER")
+                                .issuedAt(java.time.Instant.now())
+                                .expiresAt(java.time.Instant.now().plusSeconds(3600))
+                        )))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value("Subject missing"));
     }
 
     @Test
