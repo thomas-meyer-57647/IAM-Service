@@ -11,6 +11,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
@@ -44,7 +45,7 @@ public class SystemAdminController {
     })
     @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
     @PostMapping("/modules")
-    public ModuleDtos.ModuleResponse createModule(@RequestBody ModuleDtos.CreateModuleRequest req) {
+    public ModuleDtos.ModuleResponse createModule(@Valid @RequestBody ModuleDtos.CreateModuleRequest req) {
         var m = catalogService.createModule(req.moduleKey(), req.name(), req.description());
         return new ModuleDtos.ModuleResponse(m.getId(), m.getModuleKey(), m.getName(), m.getDescription(), m.isActive());
     }
@@ -57,7 +58,7 @@ public class SystemAdminController {
     )
     @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
     @PostMapping("/system/modules")
-    public ModuleDtos.ModuleResponse createModuleLegacy(@RequestBody ModuleDtos.CreateModuleRequest req) {
+    public ModuleDtos.ModuleResponse createModuleLegacy(@Valid @RequestBody ModuleDtos.CreateModuleRequest req) {
         return createModule(req);
     }
 
@@ -108,7 +109,7 @@ public class SystemAdminController {
     public ModuleDtos.PermissionResponse createPermission(
             @Parameter(in = ParameterIn.PATH, description = "Module key as declared in the catalog", example = "user", required = true)
             @PathVariable String moduleKey,
-            @RequestBody ModuleDtos.CreatePermissionRequest req) {
+            @Valid @RequestBody ModuleDtos.CreatePermissionRequest req) {
         var p = catalogService.createPermission(moduleKey, req.code(), req.description());
         return new ModuleDtos.PermissionResponse(p.getId(), moduleKey, p.getCode(), p.getDescription(), p.isActive());
     }
@@ -122,7 +123,7 @@ public class SystemAdminController {
     @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
     @PostMapping("/system/modules/{moduleKey}/permissions")
     public ModuleDtos.PermissionResponse createPermissionLegacy(@PathVariable String moduleKey,
-                                                                @RequestBody ModuleDtos.CreatePermissionRequest req) {
+                                                                @Valid @RequestBody ModuleDtos.CreatePermissionRequest req) {
         return createPermission(moduleKey, req);
     }
 
@@ -177,7 +178,7 @@ public class SystemAdminController {
             @RequestHeader(TENANT_ID) String tenantId,
             @Parameter(in = ParameterIn.PATH, description = "Module key as declared in the catalog", example = "user", required = true)
             @PathVariable String moduleKey,
-            @RequestBody ModuleDtos.SetTenantModuleEnabledRequest req) {
+            @Valid @RequestBody ModuleDtos.SetTenantModuleEnabledRequest req) {
         catalogService.setTenantModuleEnabled(tenantId, moduleKey, req.enabled());
     }
 
@@ -191,7 +192,7 @@ public class SystemAdminController {
     @PutMapping("/system/tenants/{tenantId}/modules/{moduleKey}")
     public void setTenantModuleEnabledLegacy(@PathVariable String tenantId,
                                              @PathVariable String moduleKey,
-                                             @RequestBody ModuleDtos.SetTenantModuleEnabledRequest req) {
+                                             @Valid @RequestBody ModuleDtos.SetTenantModuleEnabledRequest req) {
         catalogService.setTenantModuleEnabled(tenantId, moduleKey, req.enabled());
     }
 
@@ -207,8 +208,8 @@ public class SystemAdminController {
     })
     @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
     @PostMapping("/system/admins")
-    public void addSystemAdmin(@RequestBody ModuleDtos.AdminRequest req) {
-        adminService.addSystemAdmin(req.subjectId(), SubjectType.valueOf(req.subjectType()));
+    public void addSystemAdmin(@Valid @RequestBody ModuleDtos.AdminRequest req) {
+        adminService.addSystemAdmin(req.subjectId(), req.subjectType());
     }
 
     @Operation(
@@ -219,7 +220,7 @@ public class SystemAdminController {
     )
     @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
     @PutMapping("/system/admins/system")
-    public void addSystemAdminLegacy(@RequestBody ModuleDtos.AdminRequest req) {
+    public void addSystemAdminLegacy(@Valid @RequestBody ModuleDtos.AdminRequest req) {
         addSystemAdmin(req);
     }
 }

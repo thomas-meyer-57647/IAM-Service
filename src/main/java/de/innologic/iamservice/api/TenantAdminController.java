@@ -13,6 +13,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.MediaType;
@@ -55,7 +56,7 @@ public class TenantAdminController {
                     required = true,
                     content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = @Schema(implementation = ModuleDtos.CreateRoleRequest.class))
             )
-            @RequestBody ModuleDtos.CreateRoleRequest req) {
+            @Valid @RequestBody ModuleDtos.CreateRoleRequest req) {
         var r = roleService.createRole(tenantId, req.name(), req.description());
         return new ModuleDtos.RoleResponse(r.getId(), r.getTenantId(), r.getName(), r.getDescription(), r.isActive());
     }
@@ -103,7 +104,7 @@ public class TenantAdminController {
                     required = true,
                     content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = @Schema(implementation = ModuleDtos.SetRolePermissionsRequest.class))
             )
-            @RequestBody ModuleDtos.SetRolePermissionsRequest req) {
+            @Valid @RequestBody ModuleDtos.SetRolePermissionsRequest req) {
         roleService.setRolePermissions(tenantId, roleId, req.permissionCodes());
     }
 
@@ -128,8 +129,8 @@ public class TenantAdminController {
                     required = true,
                     content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = @Schema(implementation = ModuleDtos.AssignRoleRequest.class))
             )
-            @RequestBody ModuleDtos.AssignRoleRequest req) {
-        roleService.assignRole(tenantId, req.subjectId(), SubjectType.valueOf(req.subjectType()), req.roleId());
+            @Valid @RequestBody ModuleDtos.AssignRoleRequest req) {
+        roleService.assignRole(tenantId, req.subjectId(), req.subjectType(), req.roleId());
     }
 
     @Operation(
@@ -152,8 +153,8 @@ public class TenantAdminController {
                     required = true,
                     content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = @Schema(implementation = ModuleDtos.AdminRequest.class))
             )
-            @RequestBody ModuleDtos.AdminRequest req) {
-        adminService.addTenantAdmin(tenantId, req.subjectId(), SubjectType.valueOf(req.subjectType()));
+            @Valid @RequestBody ModuleDtos.AdminRequest req) {
+        adminService.addTenantAdmin(tenantId, req.subjectId(), req.subjectType());
     }
 
     @Operation(
@@ -177,8 +178,8 @@ public class TenantAdminController {
                     required = true,
                     content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = @Schema(implementation = ModuleDtos.AdminRequest.class))
             )
-            @RequestBody ModuleDtos.AdminRequest req) {
-        adminService.removeTenantAdmin(tenantId, req.subjectId(), SubjectType.valueOf(req.subjectType()));
+            @Valid @RequestBody ModuleDtos.AdminRequest req) {
+        adminService.removeTenantAdmin(tenantId, req.subjectId(), req.subjectType());
     }
 }
 

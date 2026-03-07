@@ -45,7 +45,7 @@ public class AccessController {
             @Parameter(in = ParameterIn.PATH, description = "Module key representing the area to inspect", example = "user", required = true)
             @PathVariable String moduleKey,
             @Parameter(in = ParameterIn.QUERY, description = "Subject type, either USER or SERVICE (defaults to USER)", example = "USER", required = false)
-            @RequestParam(defaultValue = "USER") String subjectType) {
+            @RequestParam(defaultValue = "USER") SubjectType subjectType) {
         String tenantId = CurrentPrincipal.tenantId()
                 .orElseThrow(() -> new IllegalArgumentException("missing claim: tenant_id"));
         return resolvePermissions(tenantId, subjectId, moduleKey, subjectType);
@@ -74,12 +74,12 @@ public class AccessController {
             @Parameter(in = ParameterIn.PATH, description = "Module key representing the area to inspect", example = "user", required = true)
             @PathVariable String moduleKey,
             @Parameter(in = ParameterIn.QUERY, description = "Subject type, either USER or SERVICE (defaults to USER)", example = "USER", required = false)
-            @RequestParam(defaultValue = "USER") String subjectType) {
+            @RequestParam(defaultValue = "USER") SubjectType subjectType) {
         return resolvePermissions(tenantId, subjectId, moduleKey, subjectType);
     }
 
-    private ModuleDtos.AccessResponse resolvePermissions(String tenantId, String subjectId, String moduleKey, String subjectType) {
-        var access = accessQueryService.getAccess(tenantId, subjectId, SubjectType.valueOf(subjectType), moduleKey);
+    private ModuleDtos.AccessResponse resolvePermissions(String tenantId, String subjectId, String moduleKey, SubjectType subjectType) {
+        var access = accessQueryService.getAccess(tenantId, subjectId, subjectType, moduleKey);
         return new ModuleDtos.AccessResponse(access.enabled(), access.permissions(), access.permVersion());
     }
 }
