@@ -12,6 +12,8 @@ public interface IamPermissionRepository extends JpaRepository<IamPermissionEnti
 
     List<IamPermissionEntity> findByModule_ModuleKey(String moduleKey);
 
+    boolean existsByModule_ModuleKeyAndCode(String moduleKey, String code);
+
     // Für IAM-R05: sauberes Lookup (statt findAll()+filter)
     List<IamPermissionEntity> findByCodeInAndActiveTrue(Collection<String> codes);
 

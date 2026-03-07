@@ -63,6 +63,10 @@ public class CatalogService {
         IamModuleEntity module = moduleRepo.findByModuleKey(moduleKey)
                 .orElseThrow(() -> new EntityNotFoundException("module not found: " + moduleKey));
 
+        if (permRepo.existsByModule_ModuleKeyAndCode(moduleKey, code)) {
+            throw new IllegalArgumentException("permission already exists: " + code);
+        }
+
         IamPermissionEntity p = new IamPermissionEntity();
         p.setModule(module);
         p.setCode(code);
