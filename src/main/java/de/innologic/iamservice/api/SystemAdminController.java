@@ -5,6 +5,8 @@ import de.innologic.iamservice.admin.service.AdminService;
 import de.innologic.iamservice.catalog.service.CatalogService;
 import de.innologic.iamservice.domain.SubjectType;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -103,8 +105,10 @@ public class SystemAdminController {
     })
     @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
     @PostMapping("/modules/{moduleKey}/permissions")
-    public ModuleDtos.PermissionResponse createPermission(@PathVariable String moduleKey,
-                                                          @RequestBody ModuleDtos.CreatePermissionRequest req) {
+    public ModuleDtos.PermissionResponse createPermission(
+            @Parameter(in = ParameterIn.PATH, description = "Module key as declared in the catalog", example = "user", required = true)
+            @PathVariable String moduleKey,
+            @RequestBody ModuleDtos.CreatePermissionRequest req) {
         var p = catalogService.createPermission(moduleKey, req.code(), req.description());
         return new ModuleDtos.PermissionResponse(p.getId(), moduleKey, p.getCode(), p.getDescription(), p.isActive());
     }
@@ -135,7 +139,9 @@ public class SystemAdminController {
     })
     @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
     @GetMapping("/modules/{moduleKey}/permissions")
-    public List<ModuleDtos.PermissionResponse> listPermissions(@PathVariable String moduleKey) {
+    public List<ModuleDtos.PermissionResponse> listPermissions(
+            @Parameter(in = ParameterIn.PATH, description = "Module key as declared in the catalog", example = "user", required = true)
+            @PathVariable String moduleKey) {
         return catalogService.listPermissions(moduleKey).stream()
                 .map(p -> new ModuleDtos.PermissionResponse(p.getId(), moduleKey, p.getCode(), p.getDescription(), p.isActive()))
                 .toList();
@@ -166,9 +172,12 @@ public class SystemAdminController {
     })
     @PreAuthorize("@iamAuthz.isSystemAdmin(authentication)")
     @PutMapping("/tenant/modules/{moduleKey}")
-    public void setTenantModuleEnabled(@RequestHeader(TENANT_ID) String tenantId,
-                                       @PathVariable String moduleKey,
-                                       @RequestBody ModuleDtos.SetTenantModuleEnabledRequest req) {
+    public void setTenantModuleEnabled(
+            @Parameter(in = ParameterIn.HEADER, description = "Tenant identifier activating the module", required = true, name = TENANT_ID, example = "COMPANY-1000")
+            @RequestHeader(TENANT_ID) String tenantId,
+            @Parameter(in = ParameterIn.PATH, description = "Module key as declared in the catalog", example = "user", required = true)
+            @PathVariable String moduleKey,
+            @RequestBody ModuleDtos.SetTenantModuleEnabledRequest req) {
         catalogService.setTenantModuleEnabled(tenantId, moduleKey, req.enabled());
     }
 
