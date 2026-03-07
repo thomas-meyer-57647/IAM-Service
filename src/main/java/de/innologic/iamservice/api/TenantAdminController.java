@@ -5,12 +5,17 @@ import de.innologic.iamservice.admin.service.AdminService;
 import de.innologic.iamservice.domain.SubjectType;
 import de.innologic.iamservice.role.service.RoleService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.MediaType;
 
 import java.util.List;
 
@@ -42,8 +47,15 @@ public class TenantAdminController {
     })
     @PreAuthorize("@iamAuthz.isTenantAdmin(authentication, #tenantId)")
     @PostMapping("/roles")
-    public ModuleDtos.RoleResponse createRole(@RequestHeader(TENANT_ID) String tenantId,
-                                              @RequestBody ModuleDtos.CreateRoleRequest req) {
+    public ModuleDtos.RoleResponse createRole(
+            @Parameter(in = ParameterIn.HEADER, name = TENANT_ID, description = "Tenant identifier that scopes the role", required = true, example = "COMPANY-100")
+            @RequestHeader(TENANT_ID) String tenantId,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Role definition containing display name and description",
+                    required = true,
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = @Schema(implementation = ModuleDtos.CreateRoleRequest.class))
+            )
+            @RequestBody ModuleDtos.CreateRoleRequest req) {
         var r = roleService.createRole(tenantId, req.name(), req.description());
         return new ModuleDtos.RoleResponse(r.getId(), r.getTenantId(), r.getName(), r.getDescription(), r.isActive());
     }
@@ -60,7 +72,9 @@ public class TenantAdminController {
     })
     @PreAuthorize("@iamAuthz.isTenantAdmin(authentication, #tenantId)")
     @GetMapping("/roles")
-    public List<ModuleDtos.RoleResponse> listRoles(@RequestHeader(TENANT_ID) String tenantId) {
+    public List<ModuleDtos.RoleResponse> listRoles(
+            @Parameter(in = ParameterIn.HEADER, name = TENANT_ID, description = "Tenant identifier whose roles are requested", required = true, example = "COMPANY-100")
+            @RequestHeader(TENANT_ID) String tenantId) {
         return roleService.listRoles(tenantId).stream()
                 .map(r -> new ModuleDtos.RoleResponse(r.getId(), r.getTenantId(), r.getName(), r.getDescription(), r.isActive()))
                 .toList();
@@ -79,9 +93,17 @@ public class TenantAdminController {
     })
     @PreAuthorize("@iamAuthz.isTenantAdmin(authentication, #tenantId)")
     @PutMapping("/roles/{roleId}/permissions")
-    public void setRolePermissions(@RequestHeader(TENANT_ID) String tenantId,
-                                   @PathVariable Long roleId,
-                                   @RequestBody ModuleDtos.SetRolePermissionsRequest req) {
+    public void setRolePermissions(
+            @Parameter(in = ParameterIn.HEADER, name = TENANT_ID, description = "Tenant identifier owning the role", required = true, example = "COMPANY-100")
+            @RequestHeader(TENANT_ID) String tenantId,
+            @Parameter(in = ParameterIn.PATH, description = "Identifier of the role to update", required = true, example = "15")
+            @PathVariable Long roleId,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Complete permission code list that replaces the current set",
+                    required = true,
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = @Schema(implementation = ModuleDtos.SetRolePermissionsRequest.class))
+            )
+            @RequestBody ModuleDtos.SetRolePermissionsRequest req) {
         roleService.setRolePermissions(tenantId, roleId, req.permissionCodes());
     }
 
@@ -98,8 +120,15 @@ public class TenantAdminController {
     })
     @PreAuthorize("@iamAuthz.isTenantAdmin(authentication, #tenantId)")
     @PostMapping("/assignments")
-    public void assignRole(@RequestHeader(TENANT_ID) String tenantId,
-                           @RequestBody ModuleDtos.AssignRoleRequest req) {
+    public void assignRole(
+            @Parameter(in = ParameterIn.HEADER, name = TENANT_ID, description = "Tenant identifier whose subject receives the role", required = true, example = "COMPANY-100")
+            @RequestHeader(TENANT_ID) String tenantId,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Subject and role identifiers that define the assignment",
+                    required = true,
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = @Schema(implementation = ModuleDtos.AssignRoleRequest.class))
+            )
+            @RequestBody ModuleDtos.AssignRoleRequest req) {
         roleService.assignRole(tenantId, req.subjectId(), SubjectType.valueOf(req.subjectType()), req.roleId());
     }
 
@@ -115,8 +144,15 @@ public class TenantAdminController {
     })
     @PreAuthorize("@iamAuthz.isTenantAdmin(authentication, #tenantId)")
     @PutMapping("/admins")
-    public void addTenantAdmin(@RequestHeader(TENANT_ID) String tenantId,
-                               @RequestBody ModuleDtos.AdminRequest req) {
+    public void addTenantAdmin(
+            @Parameter(in = ParameterIn.HEADER, name = TENANT_ID, description = "Tenant identifier for the admin license", required = true, example = "COMPANY-100")
+            @RequestHeader(TENANT_ID) String tenantId,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Subject data used to create the tenant admin",
+                    required = true,
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = @Schema(implementation = ModuleDtos.AdminRequest.class))
+            )
+            @RequestBody ModuleDtos.AdminRequest req) {
         adminService.addTenantAdmin(tenantId, req.subjectId(), SubjectType.valueOf(req.subjectType()));
     }
 
@@ -133,8 +169,15 @@ public class TenantAdminController {
     })
     @PreAuthorize("@iamAuthz.isTenantAdmin(authentication, #tenantId)")
     @DeleteMapping("/admins")
-    public void removeTenantAdmin(@RequestHeader(TENANT_ID) String tenantId,
-                                  @RequestBody ModuleDtos.AdminRequest req) {
+    public void removeTenantAdmin(
+            @Parameter(in = ParameterIn.HEADER, name = TENANT_ID, description = "Tenant identifier for the admin removal", required = true, example = "COMPANY-100")
+            @RequestHeader(TENANT_ID) String tenantId,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Subject identifying the admin to remove",
+                    required = true,
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = @Schema(implementation = ModuleDtos.AdminRequest.class))
+            )
+            @RequestBody ModuleDtos.AdminRequest req) {
         adminService.removeTenantAdmin(tenantId, req.subjectId(), SubjectType.valueOf(req.subjectType()));
     }
 }

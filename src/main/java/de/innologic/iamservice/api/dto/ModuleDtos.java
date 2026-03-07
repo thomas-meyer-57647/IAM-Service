@@ -35,6 +35,7 @@ public class ModuleDtos {
             @Schema(description = "Enablement flag for the module in the tenant scope", example = "true") boolean enabled
     ) {}
 
+    @Schema(description = "Payload used by tenant admins to create a role", example = "{\"name\":\"Tenant Administrator\",\"description\":\"Manages tenant IAM\"}")
     public record CreateRoleRequest(
             @Schema(description = "Role name unique within tenant", example = "Tenant Administrator") String name,
             @Schema(description = "Role description", example = "Manages tenant-specific IAM functions") String description
@@ -48,11 +49,13 @@ public class ModuleDtos {
             @Schema(description = "Active indicator", example = "true") boolean active
     ) {}
 
+    @Schema(description = "Request replacing the permissions attached to a role", example = "{\"permissionCodes\":[\"user.read\",\"user.write\"]}")
     public record SetRolePermissionsRequest(
             @Schema(description = "Complete list of permission codes for the role", example = "[\"user.read\",\"user.write\"]") java.util.List<String> permissionCodes
     ) {}
 
     // TenantId kommt via Header X-Tenant-Id
+    @Schema(description = "Payload tying a role to a tenant subject", example = "{\"subjectId\":\"USR-10001\",\"subjectType\":\"USER\",\"roleId\":15}")
     public record AssignRoleRequest(
             @Schema(description = "Subject identifier to assign the role", example = "USR-10001") String subjectId,
             @Schema(description = "Subject type (USER or SERVICE)", example = "USER") String subjectType,
@@ -65,6 +68,7 @@ public class ModuleDtos {
             @Schema(description = "Permission version number for the tenant/subject", example = "7") long permVersion
     ) {}
 
+    @Schema(description = "Payload specifying the subject to promote/demote as tenant admin", example = "{\"subjectId\":\"MAN-1\",\"subjectType\":\"SERVICE\"}")
     public record AdminRequest(
             @Schema(description = "Subject identifier being promoted", example = "USR-10001") String subjectId,
             @Schema(description = "Subject type for the admin (USER or SERVICE)", example = "USER") String subjectType
