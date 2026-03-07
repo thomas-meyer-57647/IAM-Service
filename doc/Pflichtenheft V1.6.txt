@@ -1,0 +1,788 @@
+﻿Pflichtenheft – Service: iam-service
+Feld
+Wert
+Service
+iam-service
+Version
+1.6
+Stand
+06.03.26
+Technologie
+Java 21, Spring Boot 4.0.x, Maven, MariaDB/MySQL, Spring Data JPA, Hibernate, Flyway, REST/JSON, OpenAPI/Swagger (profilabhängig), Docker
+Root-Package
+de.innologic.iamservice
+Datenbank
+iam (DB-Name konfigurierbar)
+API Context Path
+/api/v1
+Effektive Basis-URL (Default)
+http://<host>:8102/api/v1
+API/Application
+IAM_SERVER_PORT (Default 8102)
+Management/Actuator
+IAM_MANAGEMENT_SERVER_PORT (Default 8202)
+
+Inhaltsverzeichnis
+1. Ziel und Zweck	4
+2. Abgrenzung	4
+2.1 Enthalten	4
+2.2 Nicht enthalten	5
+3. Systemkontext / Abhängigkeiten	5
+3.1 Inbound (wer ruft iam-service auf)	5
+3.2 Outbound (wen nutzt iam-service)	5
+3.3 Verantwortlichkeiten (Source of Truth)	5
+3.4 Datenflüsse (Katalog / Rollen / Rechteabfrage)	6
+3.4.1 Modulkatalog	6
+3.4.2 Rollenverwaltung	6
+3.4.3 Rechteabfrage	6
+4. Begriffe	6
+5. IAM-Absicherung und Mandantentrennung	7
+5.1 Grundprinzip (OAuth2 Resource Server)	7
+5.2 JWT-Contract (Claims, Audience, Subject Types)	7
+5.3 Tenant-Kontext und Konsistenzprüfungen	7
+5.4 Autorisierung über Rollen-/Admin-Logik	8
+6. REST-API – Übersicht	8
+6.1 Basis-URL, Versionierung, Content Types	8
+6.2 Endpunkte (fachlich)	9
+6.3 Standard-Query (Paging/Sort/Filter)	9
+7. Funktionale Anforderungen (Use Cases)	10
+7.1 Modul anlegen	10
+7.2 Module lesen/listen	10
+7.3 Permission anlegen	10
+7.4 Tenant-Modul freischalten oder deaktivieren	10
+7.5 Rolle anlegen / lesen / ändern	10
+7.6 Rollen-Permissions setzen	11
+7.7 Assignment anlegen	11
+7.8 Tenant-Admin hinzufügen / entfernen	11
+7.9 System-Admin hinzufügen	11
+7.10 Rechteabfrage	11
+7.11 Beziehungen / Referenzmodell	12
+8. Datenmodell (Persistenz)	12
+8.1 Module	12
+8.2 Permission	13
+8.3 TenantModule	13
+8.4 Role	13
+8.5 RolePermission	13
+8.6 Subject	14
+8.7 Assignment	14
+8.8 TenantAdmin	14
+8.9 SystemAdmin	14
+8.10 PermVersion	15
+8.11 Persistenz- und Migrationsregeln	15
+9. Idempotency-Regeln	15
+10. Fehlerformat, Statuscodes, Fehlercodes	16
+10.1 Fehlerformat (API Error)	16
+10.2 Statuscodes	16
+10.3 Fehlercode-Mapping (Fehlernummer, Fehlermeldung, Auslöser)	16
+11. Betrieb / Deployment / Konfiguration	17
+11.1 Serviceeigene Ports (nur Defaults, ausschließlich per ENV konfigurierbar)	17
+11.1.1 API/Application Port	17
+11.1.2 Management/Actuator Port	17
+11.1.3 Optionale Ports (nur Dev/Test; Default deaktiviert)	17
+11.1.4 Regel bei parallelem Betrieb mehrerer Services auf einem Host	18
+11.2 Pfad-Konfiguration (nur per ENV)	18
+11.3 JWT Resource Server – Konfiguration (nur per ENV)	18
+11.4 Umgebungsvariablen	18
+12. Tests und Abnahmekriterien	20
+12.1 Tests	20
+12.2 Abnahmekriterien	21
+
+1. Ziel und Zweck
+Der iam-service verwaltet die fachliche Autorisierung innerhalb einer mandantenfähigen Plattform.
+Schwerpunkte:
+Verwaltung von Modulen und Permissions
+Verwaltung tenant-spezifischer Rollen
+Zuordnung von Rollen zu Subjects
+Verwaltung von Tenant-Admins und System-Admins
+Berechnung effektiver Berechtigungen je Tenant, Subject und Modul
+Mandantentrennung über tenant_id im JWT
+Bereitstellung stabiler Rechteinformationen für andere Services
+klare Trennung zu Authentifizierung, Benutzerstammdaten und Company-Stammdaten
+
+2. Abgrenzung
+2.1 Enthalten
+Verwaltung von Modulen
+Verwaltung von Permissions je Modul
+tenant-spezifische Modulfreischaltung
+Verwaltung tenant-spezifischer Rollen
+Zuordnung von Permissions zu Rollen
+Zuordnung von Rollen zu USER- und SERVICE-Subjects
+Verwaltung von Tenant-Admins
+Verwaltung von System-Admins
+Berechnung und Ausgabe effektiver Permissions pro Modul
+Berechtigungsversion permVersion pro Tenant und Subject
+JWT-Validierung inklusive Audience-Prüfung und Mandantentrennung
+
+
+2.2 Nicht enthalten
+Token-Ausstellung, Login, MFA, Refresh, Session-Verwaltung – auth-service
+Passwortverwaltung, Credentials, Identities – auth-service
+Benutzerprofile, Benutzerstatus, Person-Referenzen – user-service
+Company- und Location-Stammdaten – company-service
+Kontaktpunkte, Adressen, Kommunikationsobjekte – contact-service
+fachliche Datenobjekte anderer Domänen außerhalb des Rollen-/Rechtemodells
+
+3. Systemkontext / Abhängigkeiten
+3.1 Inbound (wer ruft iam-service auf)
+Portal/Backend mit User-Token: Rechteabfragen und tenant-spezifische Administration
+interne Services mit Service-Token: technische Rechteabfragen und systemische Administration
+user-service, company-service oder andere Fachservices: Konsum effektiver Rechteinformationen, sofern freigegeben
+Administrationsoberflächen: Pflege von Modulen, Rollen, Assignments und Admin-Zuordnungen
+3.2 Outbound (wen nutzt iam-service)
+auth-service: JWKS/Issuer als Quelle für JWT-Validierung im Resource-Server-Betrieb
+optional user-service: fachliche Referenzprüfung von USER-Subjects
+optionale Fachservices: Konsum von Autorisierungsentscheidungen
+keine Pflicht, dass andere Plattform-Services oder Docker-Compose-Stapel für lokale Fachtests bereits laufen
+3.3 Verantwortlichkeiten (Source of Truth)
+iam-service: Module, Permissions, Rollen, Assignments, Tenant-Admins, System-Admins, permVersion
+auth-service: Credentials, Passwörter, MFA, Sessions, Tokens, JWKS
+user-service: Benutzerprofil, Benutzerstatus, companyId, personId
+company-service: Company-Stammdaten und Locations
+contact-service: ContactPoints, Adressen, Owner-Modell
+3.4 Datenflüsse (Katalog / Rollen / Rechteabfrage)
+3.4.1 Modulkatalog
+1. Ein System-Admin legt Module und Permissions an.
+2. Der iam-service speichert Katalogdaten tenant-unabhängig.
+3. Tenants können Module tenant-spezifisch freischalten oder deaktivieren.
+3.4.2 Rollenverwaltung
+1. Ein Tenant-Admin legt Rollen im eigenen Tenant an.
+2. Permissions werden der Rolle zugeordnet.
+3. Rollen werden Subjects tenant-scharf zugewiesen.
+3.4.3 Rechteabfrage
+1. Ein berechtigter Caller fragt Rechte für ein Subject und ein Modul ab.
+2. Der iam-service prüft Modulfreigabe, Admin-Status, Rollen und Assignments.
+3. Die Antwort enthält enabled, permissions und permVersion.
+4. Begriffe
+Tenant: Mandant beziehungsweise Company-Kontext der Autorisierung
+Module: fachlicher Funktionsbereich mit technischem moduleKey
+Permission: atomare Aktion innerhalb eines Moduls, zum Beispiel user.read
+Role: tenant-spezifisches Bündel von Permissions
+Subject: Identität, für die Berechtigungen gelten
+subject_type: Typ des Subjekts, USER oder SERVICE
+Tenant Admin: Administrator eines konkreten Tenants
+System Admin: tenant-unabhängiger Administrator
+Enablement: tenant-spezifische Freigabe eines Moduls
+permVersion: Versionsnummer der Berechtigungssicht eines Subjects im Tenant
+Idempotency-Key: Header zur Wiederholbarkeit ausgewählter Schreiboperationen; im IAM aktuell nicht verwendet
+
+5. IAM-Absicherung und Mandantentrennung
+5.1 Grundprinzip (OAuth2 Resource Server)
+Alle fachlichen Endpunkte erwarten Authorization: Bearer <JWT>.
+Absicherung folgt dem Default-Deny-Prinzip: Routen ohne explizite Regel sind nicht erreichbar.
+5.2 JWT-Contract (Claims, Audience, Subject Types)
+JWT-Prüfungen:
+Signaturprüfung über issuer-uri oder jwk-set-uri
+Zeitvalidierung über iat und exp mit Clock-Skew
+Audience-Check: aud enthält iam-service
+Subject-Type: subject_type ist USER oder SERVICE
+Tenant-Claim: tenant_id ist vorhanden
+Pflichtclaims: iss, sub, aud, iat, exp, jti, tenant_id, subject_type
+optionale Scopes: scp oder scope
+Deterministische Contract-Fehlermeldungen (401), zum Beispiel:
+missing claim: tenant_id
+missing claim: subject_type
+wrong audience
+invalid subject_type
+5.3 Tenant-Kontext und Konsistenzprüfungen
+Tenant-Quelle ist ausschließlich tenant_id aus dem JWT.
+Optionaler Konsistenzheader:
+X-Tenant-Id
+Bei Abweichung gegenüber tenant_id erfolgt Ablehnung (403).
+Tenant-scharfe Endpunkte prüfen Mandantenkonsistenz serverseitig über:
+Header-Kontext
+Pfadparameter
+Query-Parameter
+relationale Datenhaltung mit tenant-scharfen Filtern
+Optionaler No-Data-Leak-Modus:
+bei Zugriff auf tenant-fremde Objekte kann 404 statt 403 geliefert werden
+5.4 Autorisierung über Rollen-/Admin-Logik
+Alle fachlichen Funktionen des iam-service sind abgesichert:
+Bereich
+HTTP Route
+Regel
+Ping
+GET /api/v1/ping
+authentifiziert
+Rechteabfrage
+GET /api/v1/access/subjects/{subjectId}/modules/{moduleKey}
+Self, Tenant-Admin oder System-Admin
+Rechteabfrage legacy
+GET /api/v1/access/tenants/{tenantId}/subjects/{subjectId}/modules/{moduleKey}
+Self, Tenant-Admin oder System-Admin
+Modul anlegen
+POST /api/v1/modules
+System-Admin
+Module listen
+GET /api/v1/modules
+System-Admin
+Permission anlegen
+POST /api/v1/modules/{moduleKey}/permissions
+System-Admin
+Permissions listen
+GET /api/v1/modules/{moduleKey}/permissions
+System-Admin
+Tenant-Modul setzen
+PUT /api/v1/tenant/modules/{moduleKey}
+System-Admin
+Rolle anlegen
+POST /api/v1/tenant/roles
+Tenant-Admin
+Rollen listen
+GET /api/v1/tenant/roles
+Tenant-Admin
+Rollen-Permissions setzen
+PUT /api/v1/tenant/roles/{roleId}/permissions
+Tenant-Admin
+Assignment anlegen
+POST /api/v1/tenant/assignments
+Tenant-Admin
+Tenant-Admin hinzufügen
+PUT /api/v1/tenant/admins
+Tenant-Admin oder System-Admin
+Tenant-Admin entfernen
+DELETE /api/v1/tenant/admins
+Tenant-Admin oder System-Admin
+System-Admin anlegen
+POST /api/v1/system/admins
+System-Admin
+
+6. REST-API – Übersicht
+6.1 Basis-URL, Versionierung, Content Types
+API Context Path: /api/v1
+Request/Response: application/json
+Fehler: application/json (siehe Abschnitt 10)
+Standard-Header:
+X-Correlation-Id optional; wird sonst erzeugt und zurückgegeben
+X-Tenant-Id optional; Konsistenzcheck, siehe Abschnitt 5.3
+6.2 Endpunkte (fachlich)
+Access
+GET /api/v1/access/subjects/{subjectId}/modules/{moduleKey}
+GET /api/v1/access/tenants/{tenantId}/subjects/{subjectId}/modules/{moduleKey}
+Katalog
+POST /api/v1/modules
+GET /api/v1/modules
+POST /api/v1/modules/{moduleKey}/permissions
+GET /api/v1/modules/{moduleKey}/permissions
+Tenant
+PUT /api/v1/tenant/modules/{moduleKey}
+POST /api/v1/tenant/roles
+GET /api/v1/tenant/roles
+PUT /api/v1/tenant/roles/{roleId}/permissions
+POST /api/v1/tenant/assignments
+PUT /api/v1/tenant/admins
+DELETE /api/v1/tenant/admins
+System
+POST /api/v1/system/admins
+6.3 Standard-Query (Paging/Sort/Filter)
+Paging/Sort:
+page (default 0)
+size (default 50; max zum Beispiel 200)
+sort (zum Beispiel createdAt,DESC)
+Filter:
+moduleKey=<text>
+roleName=<text>
+subjectId=<id>
+subjectType=USER|SERVICE
+enabled=true|false
+active=true|false
+7. Funktionale Anforderungen (Use Cases)
+7.1 Modul anlegen
+Persistiert ein Modul katalogweit.
+moduleKey ist systemweit eindeutig.
+Ein Modul enthält Name, Beschreibung und Aktiv-Status.
+Beispiel Request:
+{
+  "moduleKey": "user",
+  "name": "User Management",
+  "description": "Verwaltung von Benutzern"
+}
+7.2 Module lesen/listen
+Liefert Module inklusive Aktiv-Status.
+Dient Administrationsoberflächen und dem Aufbau tenant-spezifischer Freigaben.
+7.3 Permission anlegen
+Persistiert eine Permission innerhalb eines vorhandenen Moduls.
+Permission-Codes folgen der Konvention moduleKey.action.
+Beispiel Request:
+{
+  "code": "user.read",
+  "description": "Benutzer lesen"
+}
+7.4 Tenant-Modul freischalten oder deaktivieren
+Setzt tenant-spezifisch, ob ein Modul aktiviert ist.
+Ist ein Modul deaktiviert, liefert die Rechteabfrage enabled=false und keine Permissions.
+Beispiel Request:
+{
+  "tenantId": "COMPANY-1000",
+  "enabled": true
+}
+7.5 Rolle anlegen / lesen / ändern
+Persistiert eine tenant-spezifische Rolle.
+Rollenname ist innerhalb eines Tenants eindeutig.
+Beispiel Request:
+{
+  "name": "Tenant Administrator",
+  "description": "Verwaltet tenant-spezifische IAM-Funktionen"
+}
+
+7.6 Rollen-Permissions setzen
+Setzt die vollständige Menge gültiger Permissions einer Rolle.
+Bereits entfernte Zuordnungen werden logisch entfernt.
+Wieder hinzugefügte Zuordnungen werden wiederhergestellt.
+Beispiel Request:
+{
+  "permissionCodes": [
+    "user.read",
+    "user.write",
+    "company.read"
+  ]
+}
+7.7 Assignment anlegen
+Weist einem USER- oder SERVICE-Subject eine Rolle im Tenant zu.
+Ein Subject kann bei Bedarf automatisch angelegt werden.
+Beispiel Request:
+{
+  "subjectId": "USR-10001",
+  "subjectType": "USER",
+  "roleId": 15
+}
+7.8 Tenant-Admin hinzufügen / entfernen
+Fügt Tenant-Admins tenant-spezifisch hinzu oder entfernt sie.
+Der letzte Tenant-Admin eines Tenants bleibt erhalten.
+7.9 System-Admin hinzufügen
+Fügt einen tenant-unabhängigen System-Admin hinzu.
+System-Admins verwalten Module, Permissions und tenant-übergreifende Administration.
+7.10 Rechteabfrage
+Liefert effektive Rechte für tenantId, subjectId, subjectType und moduleKey.
+Beispiel Response:
+{
+  "tenantId": "COMPANY-1000",
+  "subjectId": "USR-10001",
+  "subjectType": "USER",
+  "moduleKey": "user",
+  "enabled": true,
+  "permissions": [
+    "user.read",
+    "user.write"
+  ],
+  "permVersion": 7
+}
+
+7.11 Beziehungen / Referenzmodell
+Der iam-service führt folgende fachlichen Beziehungen:
+Company
+Ein Tenant im IAM entspricht fachlich dem Company-Kontext.
+Die Zuordnung erfolgt über tenant_id.
+Auth
+Der iam-service speichert keine Auth-Daten.
+auth-service liefert Tokens, Credentials, MFA, Sessions und JWKS.
+User
+Benutzerstammdaten liegen nicht im iam-service.
+user-service bleibt führend für Benutzerprofil, Benutzerstatus, companyId und personId.
+Der iam-service referenziert Benutzer nur über subjectId mit subjectType=USER.
+Service
+Technische Service-Principals werden als subjectType=SERVICE geführt.
+Module und Permissions
+Ein Modul besitzt mehrere Permissions.
+Permissions werden Rollen zugeordnet.
+Rollen und Assignments
+Eine Rolle gehört genau einem Tenant.
+Ein Subject kann in einem Tenant mehrere Rollen besitzen.
+Admins
+Tenant-Admins sind tenant-bezogen.
+System-Admins sind tenant-unabhängig.
+
+8. Datenmodell (Persistenz)
+Die Persistenz basiert ausschließlich auf einer relationalen SQL-Datenbank mit MariaDB oder MySQL.
+Fachliche Persistenz erfolgt ausschließlich über Spring Data JPA und Hibernate.
+Direkter fachlicher Zugriff über JDBC ist nicht Bestandteil des Services.
+8.1 Module
+id
+moduleKey
+name
+description
+active
+Audit: createdAt, createdBy, modifiedAt, modifiedBy, trashedAt, trashedBy
+optional: version
+8.2 Permission
+id
+moduleId
+code
+description
+active
+Audit-Felder
+optional: version
+8.3 TenantModule
+id
+tenantId
+moduleId
+enabled
+Audit-Felder
+optional: version
+8.4 Role
+id
+tenantId
+name
+description
+active
+Audit-Felder
+optional: version
+8.5 RolePermission
+id
+roleId
+permissionId
+Audit-Felder
+optional: version
+
+8.6 Subject
+id
+subjectId
+subjectType
+active
+Audit-Felder
+optional: version
+8.7 Assignment
+id
+tenantId
+subjectPk
+roleId
+scopeType
+scopeId
+Audit-Felder
+optional: version
+8.8 TenantAdmin
+id
+tenantId
+subjectPk
+Audit-Felder
+optional: version
+8.9 SystemAdmin
+id
+subjectPk
+Audit-Felder
+optional: version
+
+8.10 PermVersion
+id
+tenantId
+subjectPk
+version
+Audit-Felder
+8.11 Persistenz- und Migrationsregeln
+Tabellen und Beziehungen werden als JPA-Entities modelliert
+Join-Beziehungen werden über eigene Entities oder relationale Join-Tabellen modelliert
+tenant-scharfe Filterung erfolgt über Repository-Methoden und Service-Validierung
+Schema-Migrationen erfolgen über Flyway
+Flyway-Migrationen verwenden allgemein gültiges, ANSI-nahes SQL
+datenbankspezifische SQL-Sonderfunktionen werden vermieden
+falls ein Datenbanksystem zwingend abweichendes SQL erfordert, erfolgt dies getrennt und explizit versioniert
+Hard Delete ist standardmäßig deaktiviert
+Restore-Semantik arbeitet über Business Keys und Soft Delete
+
+9. Idempotency-Regeln
+Ein Idempotency-Key wird im iam-service aktuell nicht verwendet.
+Stattdessen gilt:
+Wiederholte Schreiboperationen werden über Business Keys stabilisiert
+eindeutige Constraints verhindern Dubletten
+Restore-Semantik reaktiviert logisch gelöschte Datensätze
+wiederholte Zuweisungen derselben Rolle an dasselbe Subject im selben Tenant erzeugen keine Dubletten
+
+
+10. Fehlerformat, Statuscodes, Fehlercodes
+10.1 Fehlerformat (API Error)
+Fehlerantworten sind JSON und enthalten:
+timestamp (ISO-8601 UTC)
+status (HTTP Status)
+code (String)
+message (String)
+path (String)
+optional correlationId
+optional details
+10.2 Statuscodes
+400, 401, 403, 404, 409, 422, 500
+10.3 Fehlercode-Mapping (Fehlernummer, Fehlermeldung, Auslöser)
+Fehlernummer
+code
+message (exakt)
+Erscheint, wenn …
+400
+VALIDATION_ERROR
+Request validation failed
+Request verletzt Validierung
+400
+INVALID_SUBJECT_TYPE
+Invalid subject type
+subjectType ist nicht USER oder SERVICE
+400
+INVALID_PERMISSION_CODE
+Invalid permission code
+Permission-Code verletzt Format- oder Domänenregeln
+401
+UNAUTHENTICATED
+Authentication required
+Authorization Header fehlt oder Tokenvalidierung scheitert
+401
+UNAUTHENTICATED
+wrong audience
+aud enthält nicht iam-service
+401
+UNAUTHENTICATED
+missing claim: tenant_id
+tenant_id fehlt
+401
+UNAUTHENTICATED
+missing claim: subject_type
+subject_type fehlt
+401
+UNAUTHENTICATED
+invalid subject_type
+subject_type ist nicht USER oder SERVICE
+403
+FORBIDDEN
+Access denied
+Token ist gültig, Zugriff wird abgelehnt
+403
+TENANT_MISMATCH
+tenant mismatch
+X-Tenant-Id oder Tenant im Pfad weicht von tenant_id ab
+404
+MODULE_NOT_FOUND
+Module not found
+Modul existiert nicht oder ist nicht sichtbar
+404
+ROLE_NOT_FOUND
+Role not found
+Rolle existiert nicht oder ist nicht sichtbar
+404
+SUBJECT_NOT_FOUND
+Subject not found
+Subject existiert nicht oder ist nicht sichtbar
+409
+LAST_TENANT_ADMIN
+Last tenant admin cannot be removed
+letzter Tenant-Admin würde entfernt
+409
+ROLE_ALREADY_EXISTS
+Role already exists
+Rollenname ist im Tenant bereits vergeben
+409
+MODULE_ALREADY_EXISTS
+Module already exists
+moduleKey existiert bereits
+500
+INTERNAL_ERROR
+Unexpected internal error
+unerwarteter Laufzeit-, Datenbank- oder Serialisierungsfehler
+
+11. Betrieb / Deployment / Konfiguration
+11.1 Serviceeigene Ports (nur Defaults, ausschließlich per ENV konfigurierbar)
+Der iam-service bindet folgende Ports:
+11.1.1 API/Application Port
+Spring Property: server.port
+ENV: IAM_SERVER_PORT
+Default: 8102
+11.1.2 Management/Actuator Port
+Spring Property: management.server.port
+ENV: IAM_MANAGEMENT_SERVER_PORT
+Default: 8202
+11.1.3 Optionale Ports (nur Dev/Test; Default deaktiviert)
+Diese Ports werden nur gebunden, wenn entsprechende Features aktiviert werden:
+Debug (JDWP): ENV DEBUG_PORT (Default: deaktiviert)
+Remote JMX: ENV JMX_PORT und JMX_RMI_PORT (Default: deaktiviert)
+
+11.1.4 Regel bei parallelem Betrieb mehrerer Services auf einem Host
+Wenn mehrere Services gleichzeitig auf demselben Host laufen, müssen IAM_SERVER_PORT und IAM_MANAGEMENT_SERVER_PORT pro Service eindeutig sein.
+Der iam-service ist so auslegbar, dass lokale Entwicklung und fachliche Tests nicht davon abhängen, dass andere Plattform-Services oder ein kompletter Docker-Compose-Verbund bereits aktiv laufen.
+11.2 Pfad-Konfiguration (nur per ENV)
+API Context Path:
+Property: server.servlet.context-path
+ENV: SERVER_SERVLET_CONTEXT_PATH
+Default: /api/v1
+Actuator Base Path:
+Property: management.endpoints.web.base-path
+ENV: MANAGEMENT_ENDPOINTS_WEB_BASE_PATH
+Default: /actuator
+11.3 JWT Resource Server – Konfiguration (nur per ENV)
+JWKS:
+Property: spring.security.oauth2.resourceserver.jwt.jwk-set-uri
+ENV: SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI
+Issuer:
+Property: spring.security.oauth2.resourceserver.jwt.issuer-uri
+ENV: SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI
+Erwartete Audience:
+Property: security.jwt.audience
+ENV: SECURITY_JWT_AUDIENCE
+Default: iam-service
+Clock Skew:
+Property: security.jwt.clock-skew-seconds
+ENV: SECURITY_JWT_CLOCK_SKEW_SECONDS
+Default: 60
+11.4 Umgebungsvariablen
+Variable
+Default
+Beispiel
+Beschreibung
+SPRING_PROFILES_ACTIVE
+local
+prod
+Profilsteuerung
+IAM_SERVER_PORT
+8102
+8102
+API/Application Port
+IAM_MANAGEMENT_SERVER_PORT
+8202
+8202
+Management/Actuator Port
+SERVER_SERVLET_CONTEXT_PATH
+/api/v1
+/api/v1
+API Context Path
+MANAGEMENT_ENDPOINTS_WEB_BASE_PATH
+/actuator
+/actuator
+Actuator Base Path
+IAM_DB_HOST
+localhost
+mariadb
+Datenbank-Host
+IAM_DB_PORT
+3306
+3306
+Datenbank-Port
+IAM_DB_NAME
+iam
+iam
+Datenbankname
+IAM_DB_USERNAME
+iam
+iam_user
+Datenbank-Benutzer
+IAM_DB_PASSWORD
+(leer)
+secret
+Datenbank-Passwort
+SPRING_DATASOURCE_URL
+jdbc:mariadb://localhost:3306/iam
+jdbc:mariadb://mariadb:3306/iam
+technische Datasource-URL; fachlicher Persistenzzugriff erfolgt ausschließlich über JPA/Hibernate
+SPRING_DATASOURCE_USERNAME
+iam
+iam_user
+Datasource-Benutzer
+SPRING_DATASOURCE_PASSWORD
+(leer)
+secret
+Datasource-Passwort
+SPRING_JPA_HIBERNATE_DDL_AUTO
+validate
+validate
+Schema-Validierung durch Hibernate
+SPRING_JPA_SHOW_SQL
+false
+true
+SQL-Logging für Dev/Test
+SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT
+automatisch/profilabhängig
+org.hibernate.dialect.MariaDBDialect
+Hibernate Dialekt
+SPRING_FLYWAY_ENABLED
+true
+true
+Flyway aktiv
+SPRING_FLYWAY_LOCATIONS
+classpath:db/migration
+classpath:db/migration
+Ort der Migrationen
+SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI
+(leer)
+http://auth-service:8080/.well-known/jwks.json
+JWKS URL
+SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI
+(leer)
+http://auth-service:8080/api/v1/auth
+Issuer URI
+SECURITY_JWT_AUDIENCE
+iam-service
+iam-service
+erwartete Audience
+SECURITY_JWT_CLOCK_SKEW_SECONDS
+60
+60
+Clock Skew Sekunden
+IAM_NON_LEAK_404
+false
+true
+No-Data-Leak bei tenant-fremden Ressourcen
+IAM_SWAGGER_ENABLED
+true (nur local)
+false
+Swagger/OpenAPI aktiviert/deaktiviert
+IAM_TEST_DB_MODE
+h2
+h2
+Testdatenbank-Modus
+DEBUG_PORT
+(deaktiviert)
+5005
+JDWP Debug Port
+JMX_PORT
+(deaktiviert)
+9010
+Remote JMX Port
+JMX_RMI_PORT
+(deaktiviert)
+9011
+Remote JMX RMI Port
+
+12. Tests und Abnahmekriterien
+12.1 Tests
+Integrationstests REST + DB:
+Integrationstests mit relationaler Testdatenbank
+Testumgebung basiert auf H2 für isolierte Testläufe
+Testausführung erfolgt ohne Voraussetzung, dass andere Plattform-Services bereits laufen
+abhängige Fremdservices wie auth-service, user-service oder company-service werden für Tests gemockt, gestubbt oder durch Testkonfiguration ersetzt
+falls Testcontainers im Build verwendet werden, dient dies nur der isolierten Testausführung und nicht als Voraussetzung für parallel laufende Fremdservices
+Security-Tests:
+JWT-Validierung (aud, iss, exp, JWKS)
+Pflichtclaims tenant_id und subject_type
+Mandantentrennung über Header, Pfad, Query und Persistenz
+Rechteprüfung für Self, Tenant-Admin und System-Admin
+No-Data-Leak-Verhalten (404 statt 403), wenn aktiviert
+Fachtests:
+Modul anlegen / lesen / listen
+Permission anlegen / lesen
+tenant-spezifische Modulfreigabe
+Rolle anlegen / lesen / ändern
+Rollen-Permissions setzen
+Assignment anlegen
+Tenant-Admin hinzufügen / entfernen
+letzter Tenant-Admin bleibt erhalten
+System-Admin anlegen
+effektive Rechteabfrage inklusive permVersion
+Persistenztests:
+relationale Persistenz ausschließlich über JPA/Hibernate
+keine fachliche Direktpersistenz über JDBC
+JPA-Beziehungen, Constraints und Soft-Delete-Verhalten
+Flyway-Migrationen sind auf MariaDB/MySQL ausführbar
+Flyway-Skripte verwenden allgemein gültiges SQL und vermeiden unnötige Hersteller-Spezifika
+12.2 Abnahmekriterien
+gültige JWTs mit aud=iam-service werden akzeptiert
+Tokens ohne gültige Audience, ohne tenant_id oder ohne subject_type werden abgelehnt
+Mandantentrennung funktioniert für Header-, Pfad-, Query- und Datenbankkontext
+Module können katalogweit angelegt und gelesen werden
+Permissions können einem Modul korrekt zugeordnet werden
+tenant-spezifische Modulfreigaben wirken sich korrekt auf Rechteabfragen aus
+Rollen können tenant-spezifisch angelegt und gepflegt werden
+Rollen-Permissions liefern die erwartete effektive Rechtebasis
+Assignments für USER- und SERVICE-Subjects funktionieren tenant-scharf
+Tenant-Admins erhalten tenant-spezifische Administrationsrechte
+System-Admins erhalten tenant-übergreifende Administrationsrechte
+der letzte Tenant-Admin eines Tenants kann nicht entfernt werden
+Rechteabfragen liefern korrekt enabled, permissions und permVersion
+die Persistenz läuft auf MariaDB/MySQL
+fachliche Persistenz erfolgt ausschließlich über JPA/Hibernate
+NoSQL ist nicht Bestandteil des Services
+Flyway-Migrationen sind allgemein gültig formuliert und auf MariaDB/MySQL ausführbar
+Default-Ports sind 8102 für API und 8202 für Management/Actuator
+die Ports sind über IAM_SERVER_PORT und IAM_MANAGEMENT_SERVER_PORT konfigurierbar
+
