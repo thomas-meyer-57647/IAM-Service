@@ -13,6 +13,9 @@ import java.util.stream.Collectors;
 
 public class JwtAuthoritiesConverter implements Converter<Jwt, Collection<GrantedAuthority>> {
 
+    private static final String SCOPE_PREFIX = "SCOPE_";
+    private static final String ROLE_PREFIX = "ROLE_";
+
     @Override
     public Collection<GrantedAuthority> convert(Jwt jwt) {
         Set<String> authorities = new HashSet<>();
@@ -30,18 +33,17 @@ public class JwtAuthoritiesConverter implements Converter<Jwt, Collection<Grante
 
     private Set<String> extractScopes(Jwt jwt) {
         Set<String> result = new HashSet<>();
-
         Object scope = jwt.getClaims().get("scope");
         if (scope instanceof String s) {
             for (String token : s.split("\\s+")) {
-                if (!token.isBlank()) result.add("SCOPE_" + token.trim());
+                if (!token.isBlank()) result.add(SCOPE_PREFIX + token.trim());
             }
         }
 
         Object scp = jwt.getClaims().get("scp");
         if (scp instanceof Collection<?> c) {
             for (Object o : c) {
-                if (o != null) result.add("SCOPE_" + o.toString());
+                if (o != null) result.add(SCOPE_PREFIX + o.toString());
             }
         }
 
@@ -78,6 +80,6 @@ public class JwtAuthoritiesConverter implements Converter<Jwt, Collection<Grante
         String r = role.trim();
         if (r.isEmpty()) return r;
         // Spring Security Konvention: ROLE_
-        return r.startsWith("ROLE_") ? r : "ROLE_" + r;
+        return r.startsWith(ROLE_PREFIX) ? r : ROLE_PREFIX + r;
     }
 }

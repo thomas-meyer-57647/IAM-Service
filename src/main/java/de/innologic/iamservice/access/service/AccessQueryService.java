@@ -36,6 +36,13 @@ public class AccessQueryService {
     @Transactional
     public AccessQueryResult getAccess(String tenantId, String subjectId, SubjectType type, String moduleKey) {
 
+        if (tenantId == null || tenantId.isBlank()) {
+            throw new IllegalArgumentException("tenantId must not be blank");
+        }
+        if (moduleKey == null || moduleKey.isBlank()) {
+            throw new IllegalArgumentException("moduleKey must not be blank");
+        }
+
         // Modul muss für Tenant enabled sein
         if (!catalogService.isTenantModuleEnabled(tenantId, moduleKey)) {
             return new AccessQueryResult(false, List.of(), 1L);

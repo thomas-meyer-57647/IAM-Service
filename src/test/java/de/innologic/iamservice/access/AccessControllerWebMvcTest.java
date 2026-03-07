@@ -6,6 +6,7 @@ import de.innologic.iamservice.api.error.ApiErrorWriter;
 import de.innologic.iamservice.config.SecurityConfig;
 import de.innologic.iamservice.config.SecurityErrorHandlers;
 import de.innologic.iamservice.domain.SubjectType;
+import de.innologic.iamservice.security.JwtAuthoritiesConverter;
 import de.innologic.iamservice.security.JwtContractFilter;
 import de.innologic.iamservice.security.IamAuthorizationService;
 import de.innologic.iamservice.test.TestSecurityBeans;
@@ -17,7 +18,15 @@ import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.oauth2.jwt.Jwt;
 
+import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
@@ -249,5 +258,55 @@ class AccessControllerWebMvcTest {
                         )))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.status").value(403));
+    }
+
+    @Test
+    void tenantHeaderMismatch_returns403() throws Exception {
+        mockMvc.perform(get("/v1/access/subjects/{subjectId}/modules/{moduleKey}", "user123", "timeentry")
+                        .header("X-Tenant-Id", "tenantB")
+                        .param("subjectType", "USER")
+                        .with(jwt().jwt(jwt -> jwt
+                                .claim("iss", "https://auth.example.com")
+                                .claim("aud", java.util.List.of("iam-service"))
+                                .claim("jti", "jti-9")
+                                .claim("tenant_id", "tenantA")
+                                .claim("subject_type", "USER")
+                                .issuedAt(java.time.Instant.now())
+                                .expiresAt(java.time.Instant.now().plusSeconds(3600))
+                        )))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value(403));
+    }
+
+    @Test
+    void jwtAuthoritiesConverterMapsScopesAndRoles() {
+        Jwt jwt = Jwt.withTokenValue("token")
+                .header("alg", "none")
+                .claim("iss", "https://auth.example.com")
+                .claim("sub", "user-1")
+                .claim("jti", "jwt-test")
+                .claim("tenant_id", "tenantA")
+                .claim("subject_type", "USER")
+                .audience(List.of("iam-service"))
+                .claim("scope", "timeentry.read assignment.manage")
+                .claim("scp", List.of("role.read"))
+                .claim("roles", List.of("SYSTEM_ADMIN"))
+                .claim("realm_access", Map.of("roles", List.of("TENANT_ADMIN")))
+                .issuedAt(Instant.now())
+                .expiresAt(Instant.now().plusSeconds(3600))
+                .build();
+
+        JwtAuthoritiesConverter converter = new JwtAuthoritiesConverter();
+        Collection<GrantedAuthority> authorities = converter.convert(jwt);
+
+        assertThat(authorities)
+                .extracting(GrantedAuthority::getAuthority)
+                .containsExactlyInAnyOrder(
+                        "SCOPE_timeentry.read",
+                        "SCOPE_assignment.manage",
+                        "SCOPE_role.read",
+                        "ROLE_SYSTEM_ADMIN",
+                        "ROLE_TENANT_ADMIN"
+                );
     }
 }
